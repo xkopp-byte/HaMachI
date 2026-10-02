@@ -3,6 +3,13 @@
 robot::robot(QObject *parent) : QObject(parent)
 {
     startLoging=false;
+    x=y=fi=0;
+    datacounter=0;
+    forwardspeed=rotationspeed=0;
+    useDirectCommands=1;
+#ifndef DISABLE_OPENCV
+    actIndex=-1;
+#endif
     qRegisterMetaType<LaserMeasurement>("LaserMeasurement");
     #ifndef DISABLE_OPENCV
     qRegisterMetaType<cv::Mat>("cv::Mat");
@@ -10,6 +17,11 @@ robot::robot(QObject *parent) : QObject(parent)
 #ifndef DISABLE_SKELETON
 qRegisterMetaType<skeleton>("skeleton");
 #endif
+}
+
+robot::~robot()
+{
+    stopRobot(); // Join callbacks while all robot members are still alive.
 }
 
 void robot::initAndStartRobot(std::string ipaddress)
@@ -38,6 +50,7 @@ void robot::initAndStartRobot(std::string ipaddress)
 
 void robot::setSpeedVal(double forw, double rots)
 {
+    std::lock_guard<std::mutex> lock(commandMutex_);
     forwardspeed=forw;
     rotationspeed=rots;
     useDirectCommands=0;
@@ -45,6 +58,7 @@ void robot::setSpeedVal(double forw, double rots)
 
 void robot::setSpeed(double forw, double rots)
 {
+    std::lock_guard<std::mutex> lock(commandMutex_);
     if(forw==0 && rots!=0)
         robotCom.setRotationSpeed(rots);
     else if(forw!=0 && rots==0)
@@ -95,6 +109,7 @@ int robot::processThisRobot(TKobukiData robotdata)
 
     }
     ///---tu sa posielaju rychlosti do robota... vklude zakomentujte ak si chcete spravit svoje
+    std::lock_guard<std::mutex> lock(commandMutex_);
     if(useDirectCommands==0)
     {
         if(forwardspeed==0 && rotationspeed!=0)
@@ -106,6 +121,7 @@ int robot::processThisRobot(TKobukiData robotdata)
         else
             robotCom.setTranslationSpeed(0);
     }
+    emit telemetryReceived();
     datacounter++;
 
     return 0;
@@ -152,10 +168,7 @@ int robot::processThisLidar(LaserMeasurement laserData)
 int robot::processThisCamera(cv::Mat cameraData)
 {
 
-    cameraData.copyTo(frame[(actIndex+1)%3]);//kopirujem do nasej strukury
-    actIndex=(actIndex+1)%3;//aktualizujem kde je nova fotka
-
-    emit publishCamera(frame[actIndex]);
+    if (!cameraData.empty()) emit publishCamera(cameraData.clone());
     return 0;
 }
 #endif

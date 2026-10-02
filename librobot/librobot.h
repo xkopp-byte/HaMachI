@@ -44,6 +44,7 @@ public:
 
 
     void robotStart();
+    void robotStop();
     void setLaserParameters(std::string ipaddress,int laserportRobot, int laserportMe,std::function<int(LaserMeasurement)> callback )
     {
         laser_ip_portOut=laserportRobot;
@@ -104,6 +105,7 @@ public:
     long double b = 0.23; // wheelbase distance in meters, from kobuki manual https://yujinrobot.github.io/kobuki/doxygen/enAppendixProtocolSpecification.html
 
 private:
+     bool running_ = false;
      std::promise<void> ready_promise;
     std::shared_future<void> readyFuture;
     int wasLaserSet;

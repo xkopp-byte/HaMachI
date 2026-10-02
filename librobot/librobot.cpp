@@ -9,6 +9,12 @@ std::function<int(LaserMeasurement)> libRobot::do_nothing_laser=[](LaserMeasurem
 libRobot::~libRobot()
 {
 
+    robotStop();
+}
+
+void libRobot::robotStop()
+{
+    if (!running_) return;
     ready_promise.set_value();
     if(robotthreadHandle.joinable())
         robotthreadHandle.join();
@@ -23,6 +29,12 @@ libRobot::~libRobot()
         skeletonthreadHandle.join();
 #endif
 
+    robotCom.closeConnection();
+    laserCom.closeConnection();
+#ifndef DISABLE_SKELETON
+    skeletonCom.closeConnection();
+#endif
+    running_ = false;
 }
 
 libRobot::libRobot(std::string ipaddressLaser,int laserportRobot, int laserportMe,std::function<int(LaserMeasurement)> &lascallback,std::string ipaddressRobot,int robotportRobot, int robotportMe,std::function<int(TKobukiData)> &robcallback): wasLaserSet(0),wasRobotSet(0),wasCameraSet(0),wasSkeletonSet(0)
@@ -57,6 +69,7 @@ void libRobot::robotprocess()
             break;
         memset(buff,0,50000*sizeof(char));
         int retlen=robotCom.getMessage((char*)&buff,sizeof(char)*50000);
+        if (retlen <= 0) continue;
         //https://i.pinimg.com/236x/1b/91/34/1b9134e6a5d2ea2e5447651686f60520--lol-funny-funny-shit.jpg
         //tu mame data..zavolame si funkciu
 
@@ -179,6 +192,10 @@ void libRobot::laserprocess()
 
 void libRobot::robotStart()
 {
+    if (running_) return;
+    ready_promise = std::promise<void>();
+    readyFuture = ready_promise.get_future().share();
+    running_ = true;
     if(wasRobotSet==1)
     {
         std::function<void(void)> f =std::bind(&libRobot::robotprocess,this);
@@ -210,29 +227,25 @@ void libRobot::robotStart()
 void libRobot::imageViewer()
 {
     cv::VideoCapture cap;
-    cap.open(camera_link);
-    cv::Mat frameBuf;
-    while(1)
-    {
-
-        if(readyFuture.wait_for(std::chrono::seconds(0))==std::future_status::ready)
-            break;
-        cap >> frameBuf;
-
-
-
-
-        std::cout<<"doslo toto "<<frameBuf.rows<<" "<<frameBuf.cols<<std::endl;
-
-
-        // tu sa vola callback..
-        std::async(std::launch::async, [this](cv::Mat camdata) { camera_callback(camdata.clone()); },frameBuf);
-#ifdef _WIN32
-        cv::waitKey(1);
-#else
-        usleep(1*1000);
-#endif
-
+    const std::vector<int> options = {cv::CAP_PROP_OPEN_TIMEOUT_MSEC, 2000,
+                                     cv::CAP_PROP_READ_TIMEOUT_MSEC, 1000};
+    while (readyFuture.wait_for(std::chrono::milliseconds(0)) != std::future_status::ready) {
+        try {
+            if (!cap.isOpened() && !cap.open(camera_link, cv::CAP_FFMPEG, options)) {
+                readyFuture.wait_for(std::chrono::milliseconds(500));
+                continue;
+            }
+            cv::Mat image;
+            if (cap.read(image) && !image.empty()) camera_callback(image.clone());
+            else {
+                cap.release();
+                readyFuture.wait_for(std::chrono::milliseconds(100));
+            }
+        } catch (const cv::Exception &error) {
+            std::cerr << "Camera: " << error.what() << std::endl;
+            cap.release();
+            readyFuture.wait_for(std::chrono::milliseconds(500));
+        }
     }
     cap.release();
 }

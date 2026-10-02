@@ -59,3 +59,18 @@ set_target_properties(demoRMR PROPERTIES
 )
 
 install(TARGETS demoRMR RUNTIME DESTINATION bin)
+
+# HTTP MJPEG capture uses the OpenCV FFmpeg plugin on Windows.
+# Place the plugin beside the executable so it works outside Qt Creator as well.
+if(WIN32 AND NOT DISABLE_OPENCV)
+    file(GLOB demoRMR_ffmpeg_plugins
+        "${OpenCV_DIR}/x64/vc*/bin/opencv_videoio_ffmpeg*_64.dll"
+    )
+    foreach(demoRMR_ffmpeg_plugin IN LISTS demoRMR_ffmpeg_plugins)
+        add_custom_command(TARGET demoRMR POST_BUILD
+            COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+                "${demoRMR_ffmpeg_plugin}" "$<TARGET_FILE_DIR:demoRMR>"
+            VERBATIM
+        )
+    endforeach()
+endif()

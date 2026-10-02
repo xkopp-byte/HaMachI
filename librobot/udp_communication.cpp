@@ -22,10 +22,12 @@ udp_communication::udp_communication()
 void udp_communication::init_connection(std::string addres, int inport, int outport)
 {
 #ifdef _WIN32
+    closeConnection();
     WSADATA wsaData = {0};
     int iResult = 0;
     // Initialize Winsock
     iResult = WSAStartup(MAKEWORD(2, 2), &wsaData);
+    winsockStarted_ = iResult == 0;
 #else
 #endif
     las_slen = sizeof(las_si_other);
@@ -42,6 +44,8 @@ void udp_communication::init_connection(std::string addres, int inport, int outp
     ::setsockopt(las_s,SOL_SOCKET,SO_BROADCAST,&las_broadcastene,sizeof(las_broadcastene));
 #else
     ::setsockopt(las_s,SOL_SOCKET,SO_BROADCAST,&las_broadcastene,sizeof(las_broadcastene));
+    timeval timeout = {0, 100000};
+    ::setsockopt(las_s, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
 #endif
     // zero out the structure
     memset((char *) &las_si_me, 0, sizeof(las_si_me));
@@ -75,4 +79,15 @@ int udp_communication::getMessage(char *message, int maxSize)
         return -1;
     }
     return las_recv_len;
+}
+
+// Called after the receive threads have finished, before a new connection.
+void udp_communication::closeConnection()
+{
+#ifdef _WIN32
+    if (las_s != INVALID_SOCKET) { closesocket(las_s); las_s = INVALID_SOCKET; }
+    if (winsockStarted_) { WSACleanup(); winsockStarted_ = false; }
+#else
+    if (las_s >= 0) { ::close(las_s); las_s = -1; }
+#endif
 }

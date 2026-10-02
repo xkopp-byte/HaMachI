@@ -26,14 +26,17 @@ class robot : public QObject
 public:
     bool startLoging;
     explicit robot(QObject *parent = nullptr);
+    ~robot() override;
 
     void initAndStartRobot(std::string ipaddress);
+    void stopRobot() { robotCom.robotStop(); }
 
     //tato funkcia len nastavuje hodnoty.. posielaju sa v callbacku(dobre, kvoli asynchronnosti a zabezpeceniu,ze sa poslu len raz pri viacero prepisoch vramci callu)
     void setSpeedVal(double forw,double rots);
     //tato funkcia fyzicky posiela hodnoty do robota
     void setSpeed(double forw,double rots);
 signals:
+    void telemetryReceived();
     void publishPosition(double x, double y, double z);
     void publishAMCLPosition(double x, double y, double z);
     void publishLidar(const LaserMeasurement &lidata);
@@ -44,6 +47,7 @@ signals:
 void publishSkeleton(const skeleton &skeledata);
 #endif
 private:
+    std::mutex commandMutex_;
 
     /// toto su vase premenne na vasu odometriu
     double x;
