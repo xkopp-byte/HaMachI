@@ -38,7 +38,7 @@ signals:
     void disconnectRequested();
     void stopRequested();
     void motionRequested(double forwardSpeed, double rotationSpeed);
-    void viewSourceRequested(bool simulation); // Legacy source selection; View now selects layout.
+    void viewSourceRequested(bool simulation); // Legacy source selection; the preview now selects layout.
     void mainViewChanged(bool parkingAssistantMain);
 protected:
     bool eventFilter(QObject *watched, QEvent *event) override;
@@ -53,6 +53,7 @@ private:
     QElapsedTimer telemetryAge_;
     QElapsedTimer imageAge_;
     void setControlSource(ControlSource source);
+    void selectControlMode(int index);
     void updateControlAvailability();
     void stopManualMotion();
     void requestMotion(QPushButton *button, double forward, double rotation);

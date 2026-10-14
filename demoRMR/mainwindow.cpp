@@ -15,7 +15,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), ui(new Ui::MainWi
     ui->cameraPlaceholderLabel->installEventFilter(this);
     ui->widget->installEventFilter(this);
     lightStyle_ = styleSheet();
-    // A window-level shortcut also works when both bars, including this button, are hidden.
+    // The shortcut restores the toolbar even when its button is hidden.
     auto controlsShortcut = new QShortcut(QKeySequence("Ctrl+H"), this);
     connect(controlsShortcut, &QShortcut::activated, ui->controlsToggleButton, &QPushButton::toggle);
 
@@ -24,7 +24,8 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), ui(new Ui::MainWi
     connect(ui->pushButton_9, &QPushButton::clicked, this, &MainWindow::toggleConnection);
     connect(ui->safetyStopButton, &QPushButton::toggled, this, &MainWindow::setSafetyStopActive);
     connect(ui->pushButton_4, &QPushButton::clicked, this, [this]{
-        setControlSource(ControlSource::Disabled);
+        stopManualMotion();
+        emit stopRequested();
     });
     // Existing demo command values are preserved; this window only emits requests.
     connect(ui->pushButton_2, &QPushButton::pressed, this, [this]{ requestMotion(ui->pushButton_2, 500, 0); });
@@ -35,17 +36,20 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), ui(new Ui::MainWi
         connect(button, &QPushButton::released, this, [this, button]{
             if (activeManualButton_ == button) stopManualMotion();
         });
-    connect(ui->controlsToggleButton, &QPushButton::toggled, this, [this](bool visible){
-        if (!visible) stopManualMotion();
+    const QString visibleToolbarText = ui->controlsToggleButton->text();
+    connect(ui->controlsToggleButton, &QPushButton::toggled, this, [this, visibleToolbarText](bool visible){
+        ui->controlsToggleButton->setText(visible ? visibleToolbarText
+                : ui->controlsToggleButton->property("collapsedText").toString());
     });
-    connect(ui->enableManualControlCheckBox, &QCheckBox::toggled, this, [this](bool enabled){
-        setControlSource(enabled ? ControlSource::Manual : ControlSource::Disabled);
+    connect(ui->controlModeComboBox, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, &MainWindow::selectControlMode);
+    connect(ui->controlModeComboBox, QOverload<int>::of(&QComboBox::activated), this, [this](int index){
+        // Selecting the current entry also permits explicit re-enabling after a stop.
+        if (controlSource_ == ControlSource::Disabled) selectControlMode(index);
     });
-    connect(ui->enableGesturesCheckBox, &QCheckBox::toggled, this, [this](bool enabled){
-        setControlSource(enabled ? ControlSource::Gestures : ControlSource::Disabled);
+    connect(ui->previewSwapButton, &QPushButton::clicked, this, [this]{
+        setMainView(parkingViewMain_ ? 0 : 1);
     });
-    connect(ui->viewComboBox, QOverload<int>::of(&QComboBox::currentIndexChanged),
-            this, &MainWindow::setMainView);
     // Adapter connections: replace these when the project backend is ready.
     connect(this, &MainWindow::connectRequested, this, &MainWindow::startRobotSession);
     connect(this, &MainWindow::disconnectRequested, this, [this]{ endRobotSession(); });
@@ -60,7 +64,6 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), ui(new Ui::MainWi
     });
     connect(&sessionTimer_, &QTimer::timeout, this, &MainWindow::checkRobotSession);
     sessionTimer_.setInterval(200);
-    ui->viewComboBox->setToolTip("Select the large view; the other view stays in the top-right preview.");
     setConnectionState(false);
     setSafetyStopActive(ui->safetyStopButton->isChecked());
     applyTheme(ui->themeComboBox->currentIndex());
@@ -111,7 +114,8 @@ void MainWindow::setConnectionState(bool connected, const QString &message)
     ui->pushButton_9->setEnabled(true);
     ui->pushButton_9->setText(connected ? "Disconnect" : "Connect");
     ui->lineEdit->setReadOnly(connected);
-    if (changed || !connected) setControlSource(ControlSource::Disabled);
+    if (!connected) setControlSource(ControlSource::Disabled);
+    else if (changed) selectControlMode(ui->controlModeComboBox->currentIndex());
     updateControlAvailability();
     if (connected && safetyStopActive_) emit stopRequested();
     ui->connectionStatusLabel->setText(message.isEmpty() ? (connected ? "Connected" : "Disconnected") : message);
@@ -155,12 +159,6 @@ void MainWindow::setControlSource(ControlSource source)
     // Reuse the existing gesture enable switch; gesture recognition stays in the backend.
     if (robot_) robot_->setGestureControlEnabled(false);
     emit stopRequested();
-    {
-        const QSignalBlocker manualBlocker(ui->enableManualControlCheckBox);
-        const QSignalBlocker gestureBlocker(ui->enableGesturesCheckBox);
-        ui->enableManualControlCheckBox->setChecked(source == ControlSource::Manual);
-        ui->enableGesturesCheckBox->setChecked(source == ControlSource::Gestures);
-    }
     controlSource_ = source;
     updateControlAvailability();
     if (robot_ && source == ControlSource::Gestures)
@@ -168,19 +166,20 @@ void MainWindow::setControlSource(ControlSource source)
     if (changed) emit controlSourceChanged(source);
 }
 
+void MainWindow::selectControlMode(int index)
+{
+    setControlSource(index == 0 ? ControlSource::Gestures
+                               : index == 1 ? ControlSource::Manual : ControlSource::Disabled);
+}
+
 void MainWindow::updateControlAvailability()
 {
     const bool allowed = connected_ && !connectionPending_ && !safetyStopActive_;
-    ui->manualGroup->setEnabled(allowed);
-    ui->gesturesGroup->setEnabled(allowed);
-#ifdef DISABLE_SKELETON
-    ui->gesturesGroup->setEnabled(false);
-#endif
+    ui->controlModeComboBox->setEnabled(!connectionPending_ && !safetyStopActive_);
     const bool manual = allowed && controlSource_ == ControlSource::Manual;
-    for (auto button : {ui->pushButton_2, ui->pushButton_3, ui->pushButton_6, ui->pushButton_5})
-        button->setEnabled(manual);
-    ui->pushButton_4->setEnabled(allowed);
-    ui->gestureModeComboBox->setEnabled(allowed && controlSource_ == ControlSource::Gestures);
+    ui->manualGroup->setEnabled(manual);
+    // Only the selected control mode controls the bottom panel, independently of the toolbar.
+    ui->controlsPanel->setVisible(ui->controlModeComboBox->currentIndex() == 1);
 }
 
 void MainWindow::stopManualMotion()
@@ -270,6 +269,9 @@ void MainWindow::setMainView(int index)
     }
     ui->cameraPlaceholderLabel->show();
     ui->parkingAssistantGroup->show();
+    ui->previewSwapButton->setToolTip(ui->previewSwapButton->property(
+            parkingViewMain_ ? "cameraToolTip" : "parkingToolTip").toString());
+    ui->previewSwapButton->raise();
     ui->previewPanel->raise();
     for (QWidget *overlay : {static_cast<QWidget*>(ui->warningFrame),
                              static_cast<QWidget*>(ui->dangerFrame),
@@ -373,7 +375,6 @@ void MainWindow::startRobotSession(const QString &address, bool simulation)
 #else
     ui->cameraPlaceholderLabel->setText("Camera unavailable: OpenCV disabled");
 #endif
-    ui->viewComboBox->setEnabled(true);
     robot_->initAndStartRobot(address.toStdString());
     sessionTimer_.start();
 }
@@ -392,7 +393,6 @@ void MainWindow::endRobotSession(const QString &message)
         robot_ = nullptr;
     }
     imageAge_.invalidate();
-    ui->viewComboBox->setEnabled(true);
     setConnectionState(false, message);
 }
 
