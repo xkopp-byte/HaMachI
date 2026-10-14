@@ -56,8 +56,8 @@ QComboBox QAbstractItemView {
     background-color: white; color: #14243b;
     selection-background-color: #dceafa; selection-color: #14243b;
 }
-QCheckBox { spacing: 8px; padding: 5px 0px; }
-QCheckBox::indicator { width: 20px; height: 20px; }
+QCheckBox, QRadioButton { spacing: 8px; padding: 5px 0px; }
+QCheckBox::indicator, QRadioButton::indicator { width: 20px; height: 20px; }
 QFrame#warningFrame { background-color: #dc2626; border: 1px solid #b91c1c; border-radius: 3px; }
 QLabel#warningIconLabel { background-color: white; color: #dc2626; border-radius: 16px; font-size: 24px; font-weight: bold; }
 QLabel#warningTitleLabel { color: white; font-size: 16px; font-weight: bold; }
@@ -101,6 +101,15 @@ QPushButton#safetyStopButton:pressed { background-color: #991b1b; }
 
 QWidget#previewPanel { background: transparent; border: none; }
 
+QWidget#previewContent { background: transparent; border: none; }
+QPushButton#previewSwapButton {
+    background: transparent; border: 2px solid transparent; border-radius: 3px;
+    padding: 0px; min-width: 0px; min-height: 0px;
+}
+QPushButton#previewSwapButton:hover, QPushButton#previewSwapButton:focus { border-color: #60a5fa; }
+QPushButton#previewSwapButton:pressed { background-color: rgba(96, 165, 250, 30); }
+
+
 QWidget#safetyStopOverlay { background: transparent; border: none; }
 </string>
   </property>
@@ -124,8 +133,8 @@ QLineEdit:disabled, QComboBox:disabled { background-color: #2d394b; color: #b9c6
 QLineEdit:focus, QComboBox:focus { border-color: #a6d4ff; }
 QComboBox QAbstractItemView { background-color: #27354a; color: #f8fafc; selection-background-color: #496b96; selection-color: white; }
 QComboBox::drop-down { background-color: #36485f; border-left: 1px solid #8395ae; }
-QCheckBox { color: #edf2f7; }
-QCheckBox:disabled { color: #b9c6d8; }
+QCheckBox, QRadioButton { color: #edf2f7; }
+QCheckBox:disabled, QRadioButton:disabled { color: #b9c6d8; }
 QWidget#widget { background-color: #141f2d; border-color: #71839e; }
 QLabel#cameraPlaceholderLabel { color: #e3ebf7; }
 QGroupBox#parkingAssistantGroup { background-color: #202e41; color: #f4f7fb; border-color: #8da1bb; }
@@ -148,6 +157,15 @@ QPushButton#safetyStopButton:checked:hover { background-color: #ef4444; }
 QPushButton#safetyStopButton:pressed { background-color: #991b1b; }
 
 QWidget#previewPanel { background: transparent; border: none; }
+
+QWidget#previewContent { background: transparent; border: none; }
+QPushButton#previewSwapButton {
+    background: transparent; border: 2px solid transparent; border-radius: 3px;
+    padding: 0px; min-width: 0px; min-height: 0px;
+}
+QPushButton#previewSwapButton:hover, QPushButton#previewSwapButton:focus { border-color: #60a5fa; }
+QPushButton#previewSwapButton:pressed { background-color: rgba(96, 165, 250, 30); }
+
 
 QWidget#safetyStopOverlay { background: transparent; border: none; }
 </string>
@@ -247,37 +265,43 @@ QWidget#safetyStopOverlay { background: transparent; border: none; }
            </widget>
           </item>
           <item>
-           <widget class="QLabel" name="viewLabel">
+           <widget class="QLabel" name="controlModeLabel">
             <property name="text">
-             <string>View</string>
+             <string>Control</string>
             </property>
-            <property name="textFormat">
-             <enum>Qt::TextFormat::PlainText</enum>
-            </property>
-            <property name="alignment">
-             <set>Qt::AlignmentFlag::AlignCenter</set>
+            <property name="buddy">
+             <cstring>controlModeComboBox</cstring>
             </property>
            </widget>
           </item>
           <item>
-           <widget class="QComboBox" name="viewComboBox">
+           <widget class="QComboBox" name="controlModeComboBox">
             <property name="minimumSize">
              <size>
-              <width>150</width>
+              <width>160</width>
               <height>40</height>
              </size>
             </property>
+            <property name="maximumSize">
+             <size>
+              <width>200</width>
+              <height>16777215</height>
+             </size>
+            </property>
             <property name="toolTip">
-             <string>Select the large view; the other view stays in the top-right preview.</string>
+             <string>Select gesture control or show the manual movement buttons.</string>
+            </property>
+            <property name="currentIndex">
+             <number>0</number>
             </property>
             <item>
              <property name="text">
-              <string>Camera</string>
+              <string>Gesture control</string>
              </property>
             </item>
             <item>
              <property name="text">
-              <string>Parking assistant</string>
+              <string>Manual control</string>
              </property>
             </item>
            </widget>
@@ -325,10 +349,13 @@ QWidget#safetyStopOverlay { background: transparent; border: none; }
           <item>
            <widget class="QPushButton" name="controlsToggleButton">
             <property name="toolTip">
-             <string>Show or hide both settings and controls (Ctrl+H). SAFETY STOP stays on the image.</string>
+             <string>Hide only the top toolbar. Press Ctrl+H to show it again. Manual controls follow the selected control mode.</string>
             </property>
             <property name="text">
-             <string>Controls (Ctrl+H)</string>
+             <string>Hide toolbar (Ctrl+H)</string>
+            </property>
+            <property name="collapsedText" stdset="0">
+             <string>Show toolbar (Ctrl+H)</string>
             </property>
             <property name="checkable">
              <bool>true</bool>
@@ -529,7 +556,7 @@ QWidget#safetyStopOverlay { background: transparent; border: none; }
        </item>
        <item row="0" column="2" alignment="Qt::AlignmentFlag::AlignRight|Qt::AlignmentFlag::AlignTop">
         <widget class="QWidget" name="previewPanel">
-         <layout class="QVBoxLayout" name="previewLayout">
+         <layout class="QGridLayout" name="previewOverlayLayout">
           <property name="leftMargin">
            <number>0</number>
           </property>
@@ -543,153 +570,213 @@ QWidget#safetyStopOverlay { background: transparent; border: none; }
            <number>0</number>
           </property>
           <property name="spacing">
-           <number>6</number>
+           <number>0</number>
           </property>
-          <item alignment="Qt::AlignmentFlag::AlignRight">
-           <widget class="QGroupBox" name="parkingAssistantGroup">
-            <property name="minimumSize">
-             <size>
-              <width>140</width>
-              <height>140</height>
-             </size>
+          <item row="0" column="0">
+           <widget class="QWidget" name="previewContent">
+             <layout class="QVBoxLayout" name="previewLayout">
+              <property name="leftMargin">
+               <number>0</number>
+              </property>
+              <property name="topMargin">
+               <number>0</number>
+              </property>
+              <property name="rightMargin">
+               <number>0</number>
+              </property>
+              <property name="bottomMargin">
+               <number>0</number>
+              </property>
+              <property name="spacing">
+               <number>6</number>
+              </property>
+              <item alignment="Qt::AlignmentFlag::AlignRight">
+               <widget class="QGroupBox" name="parkingAssistantGroup">
+                <property name="minimumSize">
+                 <size>
+                  <width>140</width>
+                  <height>140</height>
+                 </size>
+                </property>
+                <property name="maximumSize">
+                 <size>
+                  <width>230</width>
+                  <height>230</height>
+                 </size>
+                </property>
+                <property name="title">
+                 <string />
+                </property>
+                <layout class="QVBoxLayout" name="lidarLayout" stretch="1">
+                 <property name="spacing">
+                  <number>4</number>
+                 </property>
+                 <property name="leftMargin">
+                  <number>4</number>
+                 </property>
+                 <property name="topMargin">
+                  <number>4</number>
+                 </property>
+                 <property name="rightMargin">
+                  <number>4</number>
+                 </property>
+                 <property name="bottomMargin">
+                  <number>4</number>
+                 </property>
+                 <item>
+                  <widget class="QFrame" name="lidarView">
+                   <property name="minimumSize">
+                    <size>
+                     <width>100</width>
+                     <height>100</height>
+                    </size>
+                   </property>
+                   <property name="frameShape">
+                    <enum>QFrame::Shape::NoFrame</enum>
+                   </property>
+                   <layout class="QVBoxLayout" name="lidarPlaceholderLayout">
+                    <property name="spacing">
+                     <number>4</number>
+                    </property>
+                    <property name="leftMargin">
+                     <number>4</number>
+                    </property>
+                    <property name="topMargin">
+                     <number>4</number>
+                    </property>
+                    <property name="rightMargin">
+                     <number>4</number>
+                    </property>
+                    <property name="bottomMargin">
+                     <number>4</number>
+                    </property>
+                    <item>
+                     <widget class="QLabel" name="frontOrientationLabel">
+                      <property name="text">
+                       <string>Front</string>
+                      </property>
+                      <property name="alignment">
+                       <set>Qt::AlignmentFlag::AlignCenter</set>
+                      </property>
+                     </widget>
+                    </item>
+                    <item>
+                     <spacer name="lidarUpperSpacer">
+                      <property name="orientation">
+                       <enum>Qt::Orientation::Vertical</enum>
+                      </property>
+                      <property name="sizeHint" stdset="0">
+                       <size>
+                        <width>20</width>
+                        <height>40</height>
+                       </size>
+                      </property>
+                     </spacer>
+                    </item>
+                    <item alignment="Qt::AlignmentFlag::AlignHCenter">
+                     <widget class="QLabel" name="robotCenterLabel">
+                      <property name="minimumSize">
+                       <size>
+                        <width>46</width>
+                        <height>46</height>
+                       </size>
+                      </property>
+                      <property name="maximumSize">
+                       <size>
+                        <width>46</width>
+                        <height>46</height>
+                       </size>
+                      </property>
+                      <property name="text">
+                       <string>▲</string>
+                      </property>
+                      <property name="alignment">
+                       <set>Qt::AlignmentFlag::AlignCenter</set>
+                      </property>
+                     </widget>
+                    </item>
+                    <item>
+                     <widget class="QLabel" name="lidarPlaceholderLabel">
+                      <property name="text">
+                       <string>No data</string>
+                      </property>
+                      <property name="alignment">
+                       <set>Qt::AlignmentFlag::AlignCenter</set>
+                      </property>
+                     </widget>
+                    </item>
+                    <item>
+                     <spacer name="lidarLowerSpacer">
+                      <property name="orientation">
+                       <enum>Qt::Orientation::Vertical</enum>
+                      </property>
+                      <property name="sizeHint" stdset="0">
+                       <size>
+                        <width>20</width>
+                        <height>40</height>
+                       </size>
+                      </property>
+                     </spacer>
+                    </item>
+                    <item>
+                     <widget class="QLabel" name="rearOrientationLabel">
+                      <property name="text">
+                       <string>Rear</string>
+                      </property>
+                      <property name="alignment">
+                       <set>Qt::AlignmentFlag::AlignCenter</set>
+                      </property>
+                     </widget>
+                    </item>
+                   </layout>
+                  </widget>
+                 </item>
+                </layout>
+               </widget>
+              </item>
+             </layout>
+           </widget>
+          </item>
+          <item row="0" column="0">
+           <widget class="QPushButton" name="previewSwapButton">
+            <property name="sizePolicy">
+             <sizepolicy hsizetype="Expanding" vsizetype="Expanding">
+              <horstretch>0</horstretch>
+              <verstretch>0</verstretch>
+             </sizepolicy>
             </property>
-            <property name="maximumSize">
-             <size>
-              <width>230</width>
-              <height>230</height>
-             </size>
+            <property name="cursor">
+             <cursorShape>PointingHandCursor</cursorShape>
             </property>
-            <property name="title">
+            <property name="focusPolicy">
+             <enum>Qt::FocusPolicy::StrongFocus</enum>
+            </property>
+            <property name="toolTip">
+             <string>Show parking assistant in the main view</string>
+            </property>
+            <property name="cameraToolTip" stdset="0">
+             <string>Show camera in the main view</string>
+            </property>
+            <property name="parkingToolTip" stdset="0">
+             <string>Show parking assistant in the main view</string>
+            </property>
+            <property name="accessibleName">
+             <string>Swap camera and parking views</string>
+            </property>
+            <property name="text">
              <string />
             </property>
-            <layout class="QVBoxLayout" name="lidarLayout" stretch="1">
-             <property name="spacing">
-              <number>4</number>
-             </property>
-             <property name="leftMargin">
-              <number>4</number>
-             </property>
-             <property name="topMargin">
-              <number>4</number>
-             </property>
-             <property name="rightMargin">
-              <number>4</number>
-             </property>
-             <property name="bottomMargin">
-              <number>4</number>
-             </property>
-             <item>
-              <widget class="QFrame" name="lidarView">
-               <property name="minimumSize">
-                <size>
-                 <width>100</width>
-                 <height>100</height>
-                </size>
-               </property>
-               <property name="frameShape">
-                <enum>QFrame::Shape::NoFrame</enum>
-               </property>
-               <layout class="QVBoxLayout" name="lidarPlaceholderLayout">
-                <property name="spacing">
-                 <number>4</number>
-                </property>
-                <property name="leftMargin">
-                 <number>4</number>
-                </property>
-                <property name="topMargin">
-                 <number>4</number>
-                </property>
-                <property name="rightMargin">
-                 <number>4</number>
-                </property>
-                <property name="bottomMargin">
-                 <number>4</number>
-                </property>
-                <item>
-                 <widget class="QLabel" name="frontOrientationLabel">
-                  <property name="text">
-                   <string>Front</string>
-                  </property>
-                  <property name="alignment">
-                   <set>Qt::AlignmentFlag::AlignCenter</set>
-                  </property>
-                 </widget>
-                </item>
-                <item>
-                 <spacer name="lidarUpperSpacer">
-                  <property name="orientation">
-                   <enum>Qt::Orientation::Vertical</enum>
-                  </property>
-                  <property name="sizeHint" stdset="0">
-                   <size>
-                    <width>20</width>
-                    <height>40</height>
-                   </size>
-                  </property>
-                 </spacer>
-                </item>
-                <item alignment="Qt::AlignmentFlag::AlignHCenter">
-                 <widget class="QLabel" name="robotCenterLabel">
-                  <property name="minimumSize">
-                   <size>
-                    <width>46</width>
-                    <height>46</height>
-                   </size>
-                  </property>
-                  <property name="maximumSize">
-                   <size>
-                    <width>46</width>
-                    <height>46</height>
-                   </size>
-                  </property>
-                  <property name="text">
-                   <string>▲</string>
-                  </property>
-                  <property name="alignment">
-                   <set>Qt::AlignmentFlag::AlignCenter</set>
-                  </property>
-                 </widget>
-                </item>
-                <item>
-                 <widget class="QLabel" name="lidarPlaceholderLabel">
-                  <property name="text">
-                   <string>No data</string>
-                  </property>
-                  <property name="alignment">
-                   <set>Qt::AlignmentFlag::AlignCenter</set>
-                  </property>
-                 </widget>
-                </item>
-                <item>
-                 <spacer name="lidarLowerSpacer">
-                  <property name="orientation">
-                   <enum>Qt::Orientation::Vertical</enum>
-                  </property>
-                  <property name="sizeHint" stdset="0">
-                   <size>
-                    <width>20</width>
-                    <height>40</height>
-                   </size>
-                  </property>
-                 </spacer>
-                </item>
-                <item>
-                 <widget class="QLabel" name="rearOrientationLabel">
-                  <property name="text">
-                   <string>Rear</string>
-                  </property>
-                  <property name="alignment">
-                   <set>Qt::AlignmentFlag::AlignCenter</set>
-                  </property>
-                 </widget>
-                </item>
-               </layout>
-              </widget>
-             </item>
-            </layout>
+            <property name="autoDefault">
+             <bool>false</bool>
+            </property>
+            <property name="flat">
+             <bool>true</bool>
+            </property>
            </widget>
           </item>
          </layout>
+         <zorder>previewContent</zorder>
+         <zorder>previewSwapButton</zorder>
         </widget>
        </item>
        <item row="0" column="1" alignment="Qt::AlignmentFlag::AlignHCenter|Qt::AlignmentFlag::AlignTop">
@@ -965,9 +1052,9 @@ OFF</string>
     <item>
      <widget class="QWidget" name="controlsPanel" native="true">
       <property name="visible">
-       <bool>true</bool>
+       <bool>false</bool>
       </property>
-      <layout class="QHBoxLayout" name="controlsLayout" stretch="1,1">
+      <layout class="QHBoxLayout" name="controlsLayout" stretch="1,2,1">
        <property name="spacing">
         <number>10</number>
        </property>
@@ -984,7 +1071,32 @@ OFF</string>
         <number>0</number>
        </property>
        <item>
+        <spacer name="manualLeftSpacer">
+         <property name="orientation">
+          <enum>Qt::Orientation::Horizontal</enum>
+         </property>
+         <property name="sizeHint" stdset="0">
+          <size>
+           <width>0</width>
+           <height>0</height>
+          </size>
+         </property>
+        </spacer>
+       </item>
+       <item>
         <widget class="QGroupBox" name="manualGroup">
+         <property name="minimumSize">
+          <size>
+           <width>440</width>
+           <height>0</height>
+          </size>
+         </property>
+         <property name="maximumSize">
+          <size>
+           <width>680</width>
+           <height>16777215</height>
+          </size>
+         </property>
          <property name="enabled">
           <bool>false</bool>
          </property>
@@ -995,21 +1107,8 @@ OFF</string>
           <property name="spacing">
            <number>8</number>
           </property>
-          <item row="0" column="0" colspan="3">
-           <widget class="QCheckBox" name="enableManualControlCheckBox">
-            <property name="text">
-             <string>Enable manual control</string>
-            </property>
-            <property name="checked">
-             <bool>false</bool>
-            </property>
-           </widget>
-          </item>
-          <item row="1" column="1">
+          <item row="0" column="1">
            <widget class="QPushButton" name="pushButton_2">
-            <property name="enabled">
-             <bool>false</bool>
-            </property>
             <property name="minimumSize">
              <size>
               <width>80</width>
@@ -1021,11 +1120,8 @@ OFF</string>
             </property>
            </widget>
           </item>
-          <item row="2" column="0">
+          <item row="1" column="0">
            <widget class="QPushButton" name="pushButton_6">
-            <property name="enabled">
-             <bool>false</bool>
-            </property>
             <property name="minimumSize">
              <size>
               <width>80</width>
@@ -1037,7 +1133,7 @@ OFF</string>
             </property>
            </widget>
           </item>
-          <item row="2" column="1">
+          <item row="1" column="1">
            <widget class="QPushButton" name="pushButton_4">
             <property name="minimumSize">
              <size>
@@ -1050,11 +1146,8 @@ OFF</string>
             </property>
            </widget>
           </item>
-          <item row="2" column="2">
+          <item row="1" column="2">
            <widget class="QPushButton" name="pushButton_5">
-            <property name="enabled">
-             <bool>false</bool>
-            </property>
             <property name="minimumSize">
              <size>
               <width>80</width>
@@ -1066,11 +1159,8 @@ OFF</string>
             </property>
            </widget>
           </item>
-          <item row="3" column="1">
+          <item row="2" column="1">
            <widget class="QPushButton" name="pushButton_3">
-            <property name="enabled">
-             <bool>false</bool>
-            </property>
             <property name="minimumSize">
              <size>
               <width>80</width>
@@ -1086,67 +1176,17 @@ OFF</string>
         </widget>
        </item>
        <item>
-        <widget class="QGroupBox" name="gesturesGroup">
-         <property name="enabled">
-          <bool>false</bool>
+        <spacer name="manualRightSpacer">
+         <property name="orientation">
+          <enum>Qt::Orientation::Horizontal</enum>
          </property>
-         <property name="title">
-          <string>Gestures</string>
+         <property name="sizeHint" stdset="0">
+          <size>
+           <width>0</width>
+           <height>0</height>
+          </size>
          </property>
-         <layout class="QVBoxLayout" name="gesturesLayout">
-          <property name="spacing">
-           <number>12</number>
-          </property>
-          <item>
-           <widget class="QCheckBox" name="enableGesturesCheckBox">
-            <property name="text">
-             <string>Enable gesture control</string>
-            </property>
-           </widget>
-          </item>
-          <item>
-           <layout class="QHBoxLayout" name="gestureModeLayout">
-            <item>
-             <widget class="QLabel" name="gestureModeLabel">
-              <property name="text">
-               <string>Mode:</string>
-              </property>
-             </widget>
-            </item>
-            <item>
-             <widget class="QComboBox" name="gestureModeComboBox">
-              <property name="enabled">
-               <bool>false</bool>
-              </property>
-              <item>
-               <property name="text">
-                <string>Commands</string>
-               </property>
-              </item>
-              <item>
-               <property name="text">
-                <string>Direct control</string>
-               </property>
-              </item>
-             </widget>
-            </item>
-           </layout>
-          </item>
-          <item>
-           <spacer name="gesturesSpacer">
-            <property name="orientation">
-             <enum>Qt::Orientation::Vertical</enum>
-            </property>
-            <property name="sizeHint" stdset="0">
-             <size>
-              <width>20</width>
-              <height>40</height>
-             </size>
-            </property>
-           </spacer>
-          </item>
-         </layout>
-        </widget>
+        </spacer>
        </item>
       </layout>
      </widget>
@@ -1241,37 +1281,19 @@ OFF</string>
  <tabstops>
   <tabstop>lineEdit</tabstop>
   <tabstop>pushButton_9</tabstop>
-  <tabstop>viewComboBox</tabstop>
+  <tabstop>controlModeComboBox</tabstop>
   <tabstop>themeComboBox</tabstop>
   <tabstop>controlsToggleButton</tabstop>
   <tabstop>safetyStopButton</tabstop>
-  <tabstop>enableManualControlCheckBox</tabstop>
+  <tabstop>previewSwapButton</tabstop>
   <tabstop>pushButton_2</tabstop>
   <tabstop>pushButton_6</tabstop>
   <tabstop>pushButton_4</tabstop>
   <tabstop>pushButton_5</tabstop>
   <tabstop>pushButton_3</tabstop>
-  <tabstop>enableGesturesCheckBox</tabstop>
-  <tabstop>gestureModeComboBox</tabstop>
  </tabstops>
  <resources />
  <connections>
-  <connection>
-   <sender>controlsToggleButton</sender>
-   <signal>toggled(bool)</signal>
-   <receiver>controlsPanel</receiver>
-   <slot>setVisible(bool)</slot>
-   <hints>
-    <hint type="sourcelabel">
-     <x>20</x>
-     <y>20</y>
-    </hint>
-    <hint type="destinationlabel">
-     <x>20</x>
-     <y>20</y>
-    </hint>
-   </hints>
-  </connection>
   <connection>
    <sender>controlsToggleButton</sender>
    <signal>toggled(bool)</signal>
