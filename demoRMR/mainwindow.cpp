@@ -23,23 +23,26 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), ui(new Ui::MainWi
             this, &MainWindow::applyTheme);
     connect(ui->pushButton_9, &QPushButton::clicked, this, &MainWindow::toggleConnection);
     connect(ui->safetyStopButton, &QPushButton::toggled, this, &MainWindow::setSafetyStopActive);
-    connect(ui->pushButton_4, &QPushButton::clicked, this, &MainWindow::stopRequested);
+    connect(ui->pushButton_4, &QPushButton::clicked, this, [this]{
+        setControlSource(ControlSource::Disabled);
+    });
     // Existing demo command values are preserved; this window only emits requests.
-    connect(ui->pushButton_2, &QPushButton::pressed, this, [this]{ requestMotion(500, 0); });
-    connect(ui->pushButton_3, &QPushButton::pressed, this, [this]{ requestMotion(-250, 0); });
-    connect(ui->pushButton_6, &QPushButton::pressed, this, [this]{ requestMotion(0, 3.14159/2); });
-    connect(ui->pushButton_5, &QPushButton::pressed, this, [this]{ requestMotion(0, -3.14159/2); });
+    connect(ui->pushButton_2, &QPushButton::pressed, this, [this]{ requestMotion(ui->pushButton_2, 500, 0); });
+    connect(ui->pushButton_3, &QPushButton::pressed, this, [this]{ requestMotion(ui->pushButton_3, -250, 0); });
+    connect(ui->pushButton_6, &QPushButton::pressed, this, [this]{ requestMotion(ui->pushButton_6, 0, 3.14159/2); });
+    connect(ui->pushButton_5, &QPushButton::pressed, this, [this]{ requestMotion(ui->pushButton_5, 0, -3.14159/2); });
     for (auto button : {ui->pushButton_2, ui->pushButton_3, ui->pushButton_6, ui->pushButton_5})
-        connect(button, &QPushButton::released, this, &MainWindow::stopRequested);
+        connect(button, &QPushButton::released, this, [this, button]{
+            if (activeManualButton_ == button) stopManualMotion();
+        });
     connect(ui->controlsToggleButton, &QPushButton::toggled, this, [this](bool visible){
-        if (!visible) emit stopRequested();
+        if (!visible) stopManualMotion();
+    });
+    connect(ui->enableManualControlCheckBox, &QCheckBox::toggled, this, [this](bool enabled){
+        setControlSource(enabled ? ControlSource::Manual : ControlSource::Disabled);
     });
     connect(ui->enableGesturesCheckBox, &QCheckBox::toggled, this, [this](bool enabled){
-        if (robot_ && connected_) {
-            const bool allowed = enabled && !connectionPending_ && !safetyStopActive_;
-            robot_->setGestureControlEnabled(allowed);
-            if (!allowed) robot_->setSpeed(0, 0);
-        }
+        setControlSource(enabled ? ControlSource::Gestures : ControlSource::Disabled);
     });
     connect(ui->viewComboBox, QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, &MainWindow::setMainView);
@@ -47,7 +50,9 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), ui(new Ui::MainWi
     connect(this, &MainWindow::connectRequested, this, &MainWindow::startRobotSession);
     connect(this, &MainWindow::disconnectRequested, this, [this]{ endRobotSession(); });
     connect(this, &MainWindow::motionRequested, this, [this](double forward, double rotation){
-        if (robot_ && connected_ && !safetyStopActive_ && telemetryAge_.elapsed() < 2000)
+        if (robot_ && connected_ && !connectionPending_ && !safetyStopActive_
+                && controlSource_ == ControlSource::Manual && activeManualButton_
+                && telemetryAge_.elapsed() < 2000)
             robot_->setSpeed(forward, rotation);
     });
     connect(this, &MainWindow::stopRequested, this, [this]{
@@ -67,9 +72,10 @@ void MainWindow::toggleConnection()
 {
     if (connectionPending_) return;
     if (connected_) {
+        setControlSource(ControlSource::Disabled);
         connectionPending_ = true;
         ui->pushButton_9->setEnabled(false);
-        ui->manualGroup->setEnabled(false);
+        updateControlAvailability();
         ui->connectionStatusLabel->setText("Disconnecting...");
         emit stopRequested();
         emit disconnectRequested();
@@ -88,7 +94,9 @@ void MainWindow::toggleConnection()
         QMessageBox::warning(this, "IP address", "Enter an IPv4 address, for example 127.0.0.1.");
         return;
     }
+    setControlSource(ControlSource::Disabled);
     connectionPending_ = true;
+    updateControlAvailability();
     ui->lineEdit->setReadOnly(true);
     ui->pushButton_9->setEnabled(false);
     ui->connectionStatusLabel->setText("Connecting...");
@@ -97,14 +105,14 @@ void MainWindow::toggleConnection()
 
 void MainWindow::setConnectionState(bool connected, const QString &message)
 {
+    const bool changed = connected_ != connected;
     connected_ = connected;
     connectionPending_ = false;
     ui->pushButton_9->setEnabled(true);
     ui->pushButton_9->setText(connected ? "Disconnect" : "Connect");
     ui->lineEdit->setReadOnly(connected);
-    ui->manualGroup->setEnabled(connected && !safetyStopActive_);
-    if (connected && robot_)
-        robot_->setGestureControlEnabled(!safetyStopActive_ && ui->enableGesturesCheckBox->isChecked());
+    if (changed || !connected) setControlSource(ControlSource::Disabled);
+    updateControlAvailability();
     if (connected && safetyStopActive_) emit stopRequested();
     ui->connectionStatusLabel->setText(message.isEmpty() ? (connected ? "Connected" : "Disconnected") : message);
     ui->connectionDotLabel->setStyleSheet(connected ? "color: #16a34a;" : "color: #808890;");
@@ -121,27 +129,77 @@ void MainWindow::setSafetyStopActive(bool active)
 {
     const bool changed = safetyStopActive_ != active;
     safetyStopActive_ = active;
-    if (active) {
-        // Gesture callbacks must not override the stop; require explicit re-enabling.
-        ui->enableGesturesCheckBox->setChecked(false);
-        if (robot_ && connected_) robot_->setGestureControlEnabled(false);
-    }
-    ui->gesturesGroup->setEnabled(!active);
+    if (active) setControlSource(ControlSource::Disabled);
     {
         const QSignalBlocker blocker(ui->safetyStopButton);
         ui->safetyStopButton->setChecked(active);
         ui->safetyStopButton->setText(active ? "SAFETY STOP\nON" : "SAFETY STOP\nOFF");
     }
-    ui->manualGroup->setEnabled(connected_ && !connectionPending_ && !active);
+    updateControlAvailability();
     if (changed) {
-        if (active) emit stopRequested();
         emit safetyStopChanged(active);
     }
 }
 
-void MainWindow::requestMotion(double forward, double rotation)
+void MainWindow::setControlSource(ControlSource source)
 {
-    if (connected_ && !connectionPending_ && !safetyStopActive_) emit motionRequested(forward, rotation);
+    if (!connected_ || connectionPending_ || safetyStopActive_)
+        source = ControlSource::Disabled;
+#ifdef DISABLE_SKELETON
+    if (source == ControlSource::Gestures) source = ControlSource::Disabled;
+#endif
+
+    const bool changed = controlSource_ != source;
+    controlSource_ = ControlSource::Disabled;
+    stopManualMotion();
+    // Reuse the existing gesture enable switch; gesture recognition stays in the backend.
+    if (robot_) robot_->setGestureControlEnabled(false);
+    emit stopRequested();
+    {
+        const QSignalBlocker manualBlocker(ui->enableManualControlCheckBox);
+        const QSignalBlocker gestureBlocker(ui->enableGesturesCheckBox);
+        ui->enableManualControlCheckBox->setChecked(source == ControlSource::Manual);
+        ui->enableGesturesCheckBox->setChecked(source == ControlSource::Gestures);
+    }
+    controlSource_ = source;
+    updateControlAvailability();
+    if (robot_ && source == ControlSource::Gestures)
+        robot_->setGestureControlEnabled(true);
+    if (changed) emit controlSourceChanged(source);
+}
+
+void MainWindow::updateControlAvailability()
+{
+    const bool allowed = connected_ && !connectionPending_ && !safetyStopActive_;
+    ui->manualGroup->setEnabled(allowed);
+    ui->gesturesGroup->setEnabled(allowed);
+#ifdef DISABLE_SKELETON
+    ui->gesturesGroup->setEnabled(false);
+#endif
+    const bool manual = allowed && controlSource_ == ControlSource::Manual;
+    for (auto button : {ui->pushButton_2, ui->pushButton_3, ui->pushButton_6, ui->pushButton_5})
+        button->setEnabled(manual);
+    ui->pushButton_4->setEnabled(allowed);
+    ui->gestureModeComboBox->setEnabled(allowed && controlSource_ == ControlSource::Gestures);
+}
+
+void MainWindow::stopManualMotion()
+{
+    if (!activeManualButton_) return;
+    auto button = activeManualButton_;
+    activeManualButton_ = nullptr;
+    button->setDown(false);
+    emit stopRequested();
+}
+
+void MainWindow::requestMotion(QPushButton *button, double forward, double rotation)
+{
+    if (!connected_ || connectionPending_ || safetyStopActive_
+            || controlSource_ != ControlSource::Manual || !ui->controlsPanel->isVisible()
+            || !button->isEnabled() || !button->isDown()) return;
+    if (activeManualButton_ && activeManualButton_ != button) stopManualMotion();
+    activeManualButton_ = button;
+    emit motionRequested(forward, rotation);
 }
 
 void MainWindow::setCameraImage(const QImage &image)
@@ -283,7 +341,7 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
         return true;
     }
     if (watched == this && (event->type() == QEvent::WindowDeactivate || event->type() == QEvent::Close))
-        emit stopRequested();
+        setControlSource(ControlSource::Disabled);
     return QMainWindow::eventFilter(watched, event);
 }
 
@@ -322,11 +380,11 @@ void MainWindow::startRobotSession(const QString &address, bool simulation)
 
 void MainWindow::endRobotSession(const QString &message)
 {
+    setControlSource(ControlSource::Disabled);
     sessionTimer_.stop();
     ++sessionId_; // Ignore queued frames/telemetry from the old session.
     if (robot_) {
         if (connected_) {
-            robot_->setGestureControlEnabled(false);
             robot_->setSpeed(0, 0);
         }
         robot_->stopRobot();
