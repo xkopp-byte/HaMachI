@@ -21,7 +21,7 @@
   </property>
   <property name="styleSheet">
    <string notr="true">
-QWidget { font-family: &quot;Segoe UI&quot;; font-size: 14px; color: #14243b; }
+QWidget { font-family: "Segoe UI"; font-size: 14px; color: #14243b; }
 QWidget#centralWidget { background-color: #eef1f5; }
 QLabel { background-color: transparent; }
 QLabel#connectionStatusLabel { color: #596579; }
@@ -76,6 +76,8 @@ QLabel#robotCenterLabel {
 QLabel#lidarPlaceholderLabel { color: #b4c9dc; }
 
 QPushButton#safetyStopButton { font-size: 23px; min-height: 42px; }
+QPushButton#safetyStopButton:checked { background-color: #7f1d1d; border: 3px solid #ffb4b4; }
+QPushButton#safetyStopButton:checked:hover { background-color: #991b1b; }
 QFrame#warningFrame { background-color: rgba(87, 62, 5, 225); border: 1px solid #e3a81b; }
 QLabel#warningIconLabel { color: #ffbd32; background: transparent; }
 QLabel#warningTitleLabel, QLabel#warningMessageLabel { color: #ffcf55; }
@@ -86,21 +88,43 @@ QGroupBox#parkingAssistantGroup { background-color: rgba(32, 40, 48, 230); borde
 QGroupBox#parkingAssistantGroup::title { color: #e2e7ec; }
 QFrame#lidarView { background-color: transparent; border: none; }
 QLabel#fusionOverlayLabel, QLabel#motionOverlayLabel { background: transparent; border: none; }
+
+QGroupBox#parkingAssistantGroup { margin-top: 0px; padding-top: 4px; }
 </string>
   </property>
-  <property name="darkStyleSheet" stdset="0"><string notr="true">
-QWidget { color: #e5e7eb; }
-QMainWindow, QWidget#centralWidget, QWidget#controlsPanel { background-color: #202630; }
-QGroupBox { color: #e5e7eb; border-color: #536170; }
-QPushButton { background-color: #354150; color: #f3f4f6; border-color: #617185; }
-QPushButton:hover { background-color: #46566a; }
-QPushButton:pressed, QPushButton:checked { background-color: #526781; }
-QLineEdit, QComboBox { background-color: #293443; color: #f3f4f6; border-color: #617185; }
-QComboBox QAbstractItemView { background-color: #293443; color: #f3f4f6; selection-background-color: #526781; }
-QWidget:disabled { color: #8893a2; }
+  <property name="darkStyleSheet" stdset="0">
+   <string notr="true">
+QWidget { color: #edf2f7; }
+QMainWindow, QWidget#centralWidget, QWidget#controlsPanel { background-color: #19212d; }
+QLabel { color: #edf2f7; }
+QLabel#connectionStatusLabel { color: #d5e3f3; }
+QGroupBox { background-color: #253246; color: #f4f7fb; border: 1px solid #71839e; }
+QGroupBox::title { color: #f4f7fb; }
+QPushButton { background-color: #35465e; color: #f8fafc; border-color: #8395ae; }
+QPushButton:hover { background-color: #455c7b; border-color: #a9c8ef; }
+QPushButton:pressed, QPushButton:checked { background-color: #526b8e; border-color: #b6d5ff; }
+QPushButton:focus { border: 2px solid #a6d4ff; }
+QWidget:disabled { color: #b9c6d8; }
+QPushButton:disabled { background-color: #2d394b; color: #b9c6d8; border-color: #65768d; }
+QLineEdit, QComboBox { background-color: #27354a; color: #f8fafc; border-color: #8395ae; }
+QLineEdit:read-only { background-color: #223046; color: #d5dfed; }
+QLineEdit:disabled, QComboBox:disabled { background-color: #2d394b; color: #b9c6d8; border-color: #65768d; }
+QLineEdit:focus, QComboBox:focus { border-color: #a6d4ff; }
+QComboBox QAbstractItemView { background-color: #27354a; color: #f8fafc; selection-background-color: #496b96; selection-color: white; }
+QComboBox::drop-down { background-color: #36485f; border-left: 1px solid #8395ae; }
+QCheckBox { color: #edf2f7; }
+QCheckBox:disabled { color: #b9c6d8; }
+QWidget#widget { background-color: #141f2d; border-color: #71839e; }
+QLabel#cameraPlaceholderLabel { color: #e3ebf7; }
+QGroupBox#parkingAssistantGroup { background-color: #202e41; color: #f4f7fb; border-color: #8da1bb; }
+QGroupBox#parkingAssistantGroup::title { color: #f4f7fb; }
+QLabel#frontOrientationLabel, QLabel#rearOrientationLabel, QLabel#lidarPlaceholderLabel { color: #d5e3f3; }
 QPushButton#safetyStopButton { background-color: #dc2626; color: white; }
 QPushButton#safetyStopButton:hover { background-color: #ef4444; }
-  </string></property>
+QPushButton#safetyStopButton:checked { background-color: #7f1d1d; border: 3px solid #ffb4b4; }
+QPushButton#safetyStopButton:checked:hover { background-color: #991b1b; }
+  </string>
+  </property>
   <widget class="QWidget" name="centralWidget">
    <layout class="QVBoxLayout" name="mainLayout" stretch="0,1,0">
     <property name="spacing">
@@ -119,115 +143,223 @@ QPushButton#safetyStopButton:hover { background-color: #ef4444; }
      <number>8</number>
     </property>
     <item>
-     <layout class="QHBoxLayout" name="headerLayout">
+     <layout class="QHBoxLayout" name="headerBarLayout" stretch="0,1,0,0">
       <property name="spacing">
        <number>6</number>
       </property>
       <item>
-       <widget class="QLabel" name="ipLabel">
+       <widget class="QPushButton" name="headerToggleButton">
         <property name="text">
-         <string>IP</string>
+         <string>Hide settings</string>
         </property>
-       </widget>
-      </item>
-      <item>
-       <widget class="QLineEdit" name="lineEdit">
-        <property name="minimumSize">
-         <size>
-          <width>130</width>
-          <height>40</height>
-         </size>
-        </property>
-        <property name="maximumSize">
-         <size>
-          <width>160</width>
-          <height>16777215</height>
-         </size>
-        </property>
-        <property name="text">
-         <string>127.0.0.1</string>
-        </property>
-        <property name="placeholderText">
-         <string>Robot IP address</string>
-        </property>
-        <property name="clearButtonEnabled">
+        <property name="checkable">
          <bool>true</bool>
         </property>
-       </widget>
-      </item>
-      <item>
-       <widget class="QPushButton" name="pushButton_9">
-        <property name="minimumSize">
-         <size>
-          <width>96</width>
-          <height>42</height>
-         </size>
+        <property name="checked">
+         <bool>true</bool>
         </property>
-        <property name="text">
-         <string>Connect</string>
+        <property name="toolTip">
+         <string>Show or hide the top settings. SAFETY STOP stays visible.</string>
         </property>
-       </widget>
-      </item>
-      <item>
-       <widget class="QLabel" name="connectionDotLabel">
-        <property name="text">
-         <string>●</string>
-        </property>
-       </widget>
-      </item>
-      <item>
-       <widget class="QLabel" name="connectionStatusLabel">
-        <property name="minimumSize">
-         <size>
-          <width>96</width>
-          <height>0</height>
-         </size>
-        </property>
-        <property name="text">
-         <string>Disconnected</string>
-        </property>
-       </widget>
-      </item>
-      <item>
-       <widget class="QLabel" name="viewLabel">
-        <property name="text">
-         <string>View</string>
-        </property>
-        <property name="textFormat">
-         <enum>Qt::TextFormat::PlainText</enum>
-        </property>
-        <property name="alignment">
-         <set>Qt::AlignmentFlag::AlignCenter</set>
-        </property>
-       </widget>
-      </item>
-      <item>
-       <widget class="QComboBox" name="viewComboBox">
         <property name="minimumSize">
          <size>
           <width>112</width>
-          <height>40</height>
+          <height>42</height>
          </size>
         </property>
-        <property name="toolTip">
-         <string>Select the camera or simulator image source</string>
-        </property>
-        <item>
-         <property name="text">
-          <string>Camera</string>
-         </property>
-        </item>
-        <item>
-         <property name="text">
-          <string>Simulation</string>
-         </property>
-        </item>
        </widget>
       </item>
       <item>
-       <spacer name="headerSpacer">
+       <widget class="QWidget" name="headerSettingsPanel">
+        <layout class="QHBoxLayout" name="headerLayout">
+         <property name="spacing">
+          <number>6</number>
+         </property>
+         <item>
+          <widget class="QLabel" name="ipLabel">
+           <property name="text">
+            <string>IP</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QLineEdit" name="lineEdit">
+           <property name="minimumSize">
+            <size>
+             <width>130</width>
+             <height>40</height>
+            </size>
+           </property>
+           <property name="maximumSize">
+            <size>
+             <width>160</width>
+             <height>16777215</height>
+            </size>
+           </property>
+           <property name="text">
+            <string>127.0.0.1</string>
+           </property>
+           <property name="placeholderText">
+            <string>Robot IP address</string>
+           </property>
+           <property name="clearButtonEnabled">
+            <bool>true</bool>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QPushButton" name="pushButton_9">
+           <property name="minimumSize">
+            <size>
+             <width>96</width>
+             <height>42</height>
+            </size>
+           </property>
+           <property name="text">
+            <string>Connect</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QLabel" name="connectionDotLabel">
+           <property name="text">
+            <string>●</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QLabel" name="connectionStatusLabel">
+           <property name="minimumSize">
+            <size>
+             <width>96</width>
+             <height>0</height>
+            </size>
+           </property>
+           <property name="text">
+            <string>Disconnected</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QLabel" name="viewLabel">
+           <property name="text">
+            <string>View</string>
+           </property>
+           <property name="textFormat">
+            <enum>Qt::TextFormat::PlainText</enum>
+           </property>
+           <property name="alignment">
+            <set>Qt::AlignmentFlag::AlignCenter</set>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QComboBox" name="viewComboBox">
+           <property name="minimumSize">
+            <size>
+             <width>150</width>
+             <height>40</height>
+            </size>
+           </property>
+           <property name="toolTip">
+            <string>Select the large view; the other view stays in the top-right preview.</string>
+           </property>
+           <item>
+            <property name="text">
+             <string>Camera</string>
+            </property>
+           </item>
+           <item>
+            <property name="text">
+             <string>Parking assistant</string>
+            </property>
+           </item>
+          </widget>
+         </item>
+         <item>
+          <spacer name="headerSpacer">
+           <property name="orientation">
+            <enum>Qt::Orientation::Horizontal</enum>
+           </property>
+           <property name="sizeHint" stdset="0">
+            <size>
+             <width>0</width>
+             <height>0</height>
+            </size>
+           </property>
+          </spacer>
+         </item>
+         <item>
+          <widget class="QLabel" name="themeLabel">
+           <property name="text">
+            <string>Theme</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QComboBox" name="themeComboBox">
+           <property name="minimumSize">
+            <size>
+             <width>100</width>
+             <height>40</height>
+            </size>
+           </property>
+           <item>
+            <property name="text">
+             <string>Light</string>
+            </property>
+           </item>
+           <item>
+            <property name="text">
+             <string>Dark</string>
+            </property>
+           </item>
+          </widget>
+         </item>
+         <item>
+          <widget class="QPushButton" name="controlsToggleButton">
+           <property name="toolTip">
+            <string>Show or hide manual and gesture controls (Ctrl+H)</string>
+           </property>
+           <property name="text">
+            <string>Controls (Ctrl+H)</string>
+           </property>
+           <property name="shortcut">
+            <string>Ctrl+H</string>
+           </property>
+           <property name="checkable">
+            <bool>true</bool>
+           </property>
+           <property name="checked">
+            <bool>false</bool>
+           </property>
+           <property name="autoRepeat">
+            <bool>false</bool>
+           </property>
+          </widget>
+         </item>
+         <property name="leftMargin">
+          <number>0</number>
+         </property>
+         <property name="topMargin">
+          <number>0</number>
+         </property>
+         <property name="rightMargin">
+          <number>0</number>
+         </property>
+         <property name="bottomMargin">
+          <number>0</number>
+         </property>
+        </layout>
+       </widget>
+      </item>
+      <item>
+       <spacer name="headerCollapsedSpacer">
         <property name="orientation">
          <enum>Qt::Orientation::Horizontal</enum>
+        </property>
+        <property name="sizeType">
+         <enum>QSizePolicy::Policy::Expanding</enum>
         </property>
         <property name="sizeHint" stdset="0">
          <size>
@@ -238,42 +370,15 @@ QPushButton#safetyStopButton:hover { background-color: #ef4444; }
        </spacer>
       </item>
       <item>
-       <widget class="QLabel" name="themeLabel">
-        <property name="text">
-         <string>Theme</string>
-        </property>
-       </widget>
-      </item>
-      <item>
-       <widget class="QComboBox" name="themeComboBox">
+       <widget class="QPushButton" name="safetyStopButton">
         <property name="minimumSize">
          <size>
-          <width>100</width>
-          <height>40</height>
+          <width>270</width>
+          <height>60</height>
          </size>
         </property>
-        <item>
-         <property name="text">
-          <string>Light</string>
-         </property>
-        </item>
-        <item>
-         <property name="text">
-          <string>Dark</string>
-         </property>
-        </item>
-       </widget>
-      </item>
-      <item>
-       <widget class="QPushButton" name="controlsToggleButton">
-        <property name="toolTip">
-         <string>Show or hide manual and gesture controls (Ctrl+H)</string>
-        </property>
         <property name="text">
-         <string>Controls (Ctrl+H)</string>
-        </property>
-        <property name="shortcut">
-         <string>Ctrl+H</string>
+         <string>SAFETY STOP OFF</string>
         </property>
         <property name="checkable">
          <bool>true</bool>
@@ -284,18 +389,8 @@ QPushButton#safetyStopButton:hover { background-color: #ef4444; }
         <property name="autoRepeat">
          <bool>false</bool>
         </property>
-       </widget>
-      </item>
-      <item>
-       <widget class="QPushButton" name="safetyStopButton">
-        <property name="minimumSize">
-         <size>
-          <width>210</width>
-          <height>60</height>
-         </size>
-        </property>
-        <property name="text">
-         <string>SAFETY STOP</string>
+        <property name="toolTip">
+         <string>Toggle the stop latch. ON blocks movement; OFF allows new commands.</string>
         </property>
        </widget>
       </item>
@@ -353,7 +448,7 @@ QPushButton#safetyStopButton:hover { background-color: #ef4444; }
           <string>Overlay for projected LiDAR measurements; populated from live data</string>
          </property>
          <property name="text">
-          <string/>
+          <string />
          </property>
          <property name="textFormat">
           <enum>Qt::TextFormat::PlainText</enum>
@@ -434,7 +529,7 @@ QPushButton#safetyStopButton:hover { background-color: #ef4444; }
           <item>
            <widget class="QLabel" name="warningMessageLabel">
             <property name="text">
-             <string/>
+             <string />
             </property>
             <property name="wordWrap">
              <bool>true</bool>
@@ -461,8 +556,8 @@ QPushButton#safetyStopButton:hover { background-color: #ef4444; }
         <widget class="QGroupBox" name="parkingAssistantGroup">
          <property name="minimumSize">
           <size>
-           <width>210</width>
-           <height>210</height>
+           <width>140</width>
+           <height>140</height>
           </size>
          </property>
          <property name="maximumSize">
@@ -472,7 +567,7 @@ QPushButton#safetyStopButton:hover { background-color: #ef4444; }
           </size>
          </property>
          <property name="title">
-          <string>Parking assistant</string>
+          <string />
          </property>
          <layout class="QVBoxLayout" name="lidarLayout" stretch="1">
           <property name="spacing">
@@ -494,8 +589,8 @@ QPushButton#safetyStopButton:hover { background-color: #ef4444; }
            <widget class="QFrame" name="lidarView">
             <property name="minimumSize">
              <size>
-              <width>180</width>
-              <height>150</height>
+              <width>100</width>
+              <height>100</height>
              </size>
             </property>
             <property name="frameShape">
@@ -619,7 +714,7 @@ QPushButton#safetyStopButton:hover { background-color: #ef4444; }
           <string>Obstacle ahead</string>
          </property>
          <property name="styleSheet">
-          <string>color: #ffbd32; background: transparent; font-family: &quot;Segoe UI Symbol&quot;; font-size: 32px; font-weight: bold;</string>
+          <string>color: #ffbd32; background: transparent; font-family: "Segoe UI Symbol"; font-size: 32px; font-weight: bold;</string>
          </property>
          <property name="text">
           <string>⌃
@@ -652,7 +747,7 @@ QPushButton#safetyStopButton:hover { background-color: #ef4444; }
           <string>Obstacle behind</string>
          </property>
          <property name="styleSheet">
-          <string>color: #ffbd32; background: transparent; font-family: &quot;Segoe UI Symbol&quot;; font-size: 32px; font-weight: bold;</string>
+          <string>color: #ffbd32; background: transparent; font-family: "Segoe UI Symbol"; font-size: 32px; font-weight: bold;</string>
          </property>
          <property name="text">
           <string>⌄
@@ -685,7 +780,7 @@ QPushButton#safetyStopButton:hover { background-color: #ef4444; }
           <string>Obstacle on the left</string>
          </property>
          <property name="styleSheet">
-          <string>color: #ffbd32; background: transparent; font-family: &quot;Segoe UI Symbol&quot;; font-size: 32px; font-weight: bold;</string>
+          <string>color: #ffbd32; background: transparent; font-family: "Segoe UI Symbol"; font-size: 32px; font-weight: bold;</string>
          </property>
          <property name="text">
           <string>❯❯❯</string>
@@ -716,7 +811,7 @@ QPushButton#safetyStopButton:hover { background-color: #ef4444; }
           <string>Obstacle on the right</string>
          </property>
          <property name="styleSheet">
-          <string>color: #ffbd32; background: transparent; font-family: &quot;Segoe UI Symbol&quot;; font-size: 32px; font-weight: bold;</string>
+          <string>color: #ffbd32; background: transparent; font-family: "Segoe UI Symbol"; font-size: 32px; font-weight: bold;</string>
          </property>
          <property name="text">
           <string>❮❮❮</string>
@@ -769,7 +864,7 @@ QPushButton#safetyStopButton:hover { background-color: #ef4444; }
           <item>
            <widget class="QLabel" name="dangerMessageLabel">
             <property name="text">
-             <string/>
+             <string />
             </property>
             <property name="textFormat">
              <enum>Qt::TextFormat::PlainText</enum>
@@ -794,7 +889,7 @@ QPushButton#safetyStopButton:hover { background-color: #ef4444; }
           <string>Robot-centre trajectory overlay; direction and curvature supplied by motion data</string>
          </property>
          <property name="text">
-          <string/>
+          <string />
          </property>
          <property name="textFormat">
           <enum>Qt::TextFormat::PlainText</enum>
@@ -1066,6 +1161,7 @@ QPushButton#safetyStopButton:hover { background-color: #ef4444; }
   </widget>
  </widget>
  <tabstops>
+  <tabstop>headerToggleButton</tabstop>
   <tabstop>lineEdit</tabstop>
   <tabstop>pushButton_9</tabstop>
   <tabstop>viewComboBox</tabstop>
@@ -1080,7 +1176,7 @@ QPushButton#safetyStopButton:hover { background-color: #ef4444; }
   <tabstop>enableGesturesCheckBox</tabstop>
   <tabstop>gestureModeComboBox</tabstop>
  </tabstops>
- <resources/>
+ <resources />
  <connections>
   <connection>
    <sender>controlsToggleButton</sender>
@@ -1113,6 +1209,12 @@ QPushButton#safetyStopButton:hover { background-color: #ef4444; }
      <y>20</y>
     </hint>
    </hints>
+  </connection>
+  <connection>
+   <sender>headerToggleButton</sender>
+   <signal>toggled(bool)</signal>
+   <receiver>headerSettingsPanel</receiver>
+   <slot>setVisible(bool)</slot>
   </connection>
  </connections>
 </ui>
