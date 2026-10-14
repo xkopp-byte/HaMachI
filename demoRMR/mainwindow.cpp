@@ -40,9 +40,10 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), ui(new Ui::MainWi
         if (!visible) emit stopRequested();
     });
     connect(ui->enableGesturesCheckBox, &QCheckBox::toggled, this, [this](bool enabled){
-        if (robot_) {
-            robot_->setGestureControlEnabled(enabled);
-            if (!enabled && connected_) robot_->setSpeed(0, 0);
+        if (robot_ && connected_) {
+            const bool allowed = enabled && !connectionPending_ && !safetyStopActive_;
+            robot_->setGestureControlEnabled(allowed);
+            if (!allowed) robot_->setSpeed(0, 0);
         }
     });
     connect(ui->viewComboBox, QOverload<int>::of(&QComboBox::currentIndexChanged),
@@ -107,6 +108,8 @@ void MainWindow::setConnectionState(bool connected, const QString &message)
     ui->pushButton_9->setText(connected ? "Disconnect" : "Connect");
     ui->lineEdit->setReadOnly(connected);
     ui->manualGroup->setEnabled(connected && !safetyStopActive_);
+    if (connected && robot_)
+        robot_->setGestureControlEnabled(!safetyStopActive_ && ui->enableGesturesCheckBox->isChecked());
     if (connected && safetyStopActive_) emit stopRequested();
     ui->connectionStatusLabel->setText(message.isEmpty() ? (connected ? "Connected" : "Disconnected") : message);
     ui->connectionDotLabel->setStyleSheet(connected ? "color: #16a34a;" : "color: #808890;");
@@ -123,6 +126,12 @@ void MainWindow::setSafetyStopActive(bool active)
 {
     const bool changed = safetyStopActive_ != active;
     safetyStopActive_ = active;
+    if (active) {
+        // Gesture callbacks must not override the stop; require explicit re-enabling.
+        ui->enableGesturesCheckBox->setChecked(false);
+        if (robot_ && connected_) robot_->setGestureControlEnabled(false);
+    }
+    ui->gesturesGroup->setEnabled(!active);
     {
         const QSignalBlocker blocker(ui->safetyStopButton);
         ui->safetyStopButton->setChecked(active);
@@ -311,7 +320,10 @@ void MainWindow::endRobotSession(const QString &message)
     sessionTimer_.stop();
     ++sessionId_; // Ignore queued frames/telemetry from the old session.
     if (robot_) {
-        if (connected_) robot_->setSpeed(0, 0);
+        if (connected_) {
+            robot_->setGestureControlEnabled(false);
+            robot_->setSpeed(0, 0);
+        }
         robot_->stopRobot();
         delete robot_;
         robot_ = nullptr;
