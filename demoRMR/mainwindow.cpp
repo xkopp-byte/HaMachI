@@ -15,14 +15,9 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), ui(new Ui::MainWi
     ui->cameraPlaceholderLabel->installEventFilter(this);
     ui->widget->installEventFilter(this);
     lightStyle_ = styleSheet();
-    // Ctrl+H remains available when its button is inside the collapsed settings.
-    auto hiddenControlsShortcut = new QShortcut(QKeySequence("Ctrl+H"), this);
-    hiddenControlsShortcut->setEnabled(!ui->headerToggleButton->isChecked());
-    connect(hiddenControlsShortcut, &QShortcut::activated, ui->controlsToggleButton, &QPushButton::toggle);
-    connect(ui->headerToggleButton, &QPushButton::toggled, this, [this, hiddenControlsShortcut](bool visible){
-        ui->headerToggleButton->setText(visible ? "Hide settings" : "Show settings");
-        hiddenControlsShortcut->setEnabled(!visible);
-    });
+    // A window-level shortcut also works when both bars, including this button, are hidden.
+    auto controlsShortcut = new QShortcut(QKeySequence("Ctrl+H"), this);
+    connect(controlsShortcut, &QShortcut::activated, ui->controlsToggleButton, &QPushButton::toggle);
 
     connect(ui->themeComboBox, QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, &MainWindow::applyTheme);
@@ -135,7 +130,7 @@ void MainWindow::setSafetyStopActive(bool active)
     {
         const QSignalBlocker blocker(ui->safetyStopButton);
         ui->safetyStopButton->setChecked(active);
-        ui->safetyStopButton->setText(active ? "SAFETY STOP ON" : "SAFETY STOP OFF");
+        ui->safetyStopButton->setText(active ? "SAFETY STOP\nON" : "SAFETY STOP\nOFF");
     }
     ui->manualGroup->setEnabled(connected_ && !connectionPending_ && !active);
     if (changed) {
@@ -193,13 +188,14 @@ void MainWindow::setMainView(int index)
     parkingViewMain_ = index == 1;
     ui->cameraOverlayLayout->removeWidget(ui->cameraPlaceholderLabel);
     ui->cameraOverlayLayout->removeWidget(ui->parkingAssistantGroup);
+    ui->previewLayout->removeWidget(ui->cameraPlaceholderLabel);
+    ui->previewLayout->removeWidget(ui->parkingAssistantGroup);
     if (parkingViewMain_) {
         ui->parkingAssistantGroup->setMinimumSize(0, 0);
         ui->parkingAssistantGroup->setMaximumSize(QWIDGETSIZE_MAX, QWIDGETSIZE_MAX);
         ui->parkingAssistantGroup->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
         ui->cameraOverlayLayout->addWidget(ui->parkingAssistantGroup, 0, 0, 3, 3);
-        ui->cameraOverlayLayout->addWidget(ui->cameraPlaceholderLabel, 0, 2,
-                                           Qt::AlignRight | Qt::AlignTop);
+        ui->previewLayout->insertWidget(0, ui->cameraPlaceholderLabel, 0, Qt::AlignRight);
         ui->parkingAssistantGroup->lower();
         ui->cameraPlaceholderLabel->raise();
     } else {
@@ -210,11 +206,13 @@ void MainWindow::setMainView(int index)
         ui->parkingAssistantGroup->setMaximumSize(230, 230);
         ui->parkingAssistantGroup->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Preferred);
         ui->cameraOverlayLayout->addWidget(ui->cameraPlaceholderLabel, 0, 0, 3, 3);
-        ui->cameraOverlayLayout->addWidget(ui->parkingAssistantGroup, 0, 2,
-                                           Qt::AlignRight | Qt::AlignTop);
+        ui->previewLayout->insertWidget(0, ui->parkingAssistantGroup, 0, Qt::AlignRight);
         ui->cameraPlaceholderLabel->lower();
         ui->parkingAssistantGroup->raise();
     }
+    ui->cameraPlaceholderLabel->show();
+    ui->parkingAssistantGroup->show();
+    ui->previewPanel->raise();
     for (QWidget *overlay : {static_cast<QWidget*>(ui->warningFrame),
                              static_cast<QWidget*>(ui->dangerFrame),
                              static_cast<QWidget*>(ui->frontObstacleIndicator),
@@ -222,6 +220,7 @@ void MainWindow::setMainView(int index)
                              static_cast<QWidget*>(ui->leftObstacleIndicator),
                              static_cast<QWidget*>(ui->rightObstacleIndicator)})
         overlay->raise();
+    ui->safetyStopOverlay->raise();
     updateCameraLayout();
     ui->cameraOverlayLayout->activate();
     ui->cameraPlaceholderLabel->update();
@@ -244,20 +243,26 @@ void MainWindow::updateCameraLayout()
                            border + extraHeight - extraHeight / 2);
         mainSize = fitted;
     }
-    // About 30% of the shorter side; bounds keep the preview readable and unobtrusive.
-    const int edge = qBound(140, qRound(qMin(mainSize.width(), mainSize.height()) * 0.30), 230);
     if (parkingViewMain_) {
-        const QSize preview = cameraImage_.isNull() ? QSize(edge, qRound(edge * 2.0 / 3.0))
-                : cameraImage_.size().scaled(QSize(edge, edge), Qt::KeepAspectRatio);
+        // A landscape camera needs a wider budget than the square LiDAR minimap.
+        const int previewWidth = qBound(240, qRound(mainSize.width() * 0.28), 420);
+        const int previewHeight = qBound(120, qRound(mainSize.height() * 0.45), 260);
+        const QSize budget(previewWidth, previewHeight);
+        const QSize fittedPreview = (cameraImage_.isNull() ? QSize(16, 9) : cameraImage_.size())
+                .scaled(budget, Qt::KeepAspectRatio);
+        const QSize preview(qMax(140, fittedPreview.width()), fittedPreview.height());
         if (ui->cameraPlaceholderLabel->minimumSize() != preview
                 || ui->cameraPlaceholderLabel->maximumSize() != preview)
             ui->cameraPlaceholderLabel->setFixedSize(preview);
     } else {
+        // Keep the square LiDAR minimap proportional to the main camera's height.
+        const int edge = qBound(140, qRound(qMin(mainSize.width(), mainSize.height()) * 0.30), 230);
         const QSize preview(edge, edge);
         if (ui->parkingAssistantGroup->minimumSize() != preview
                 || ui->parkingAssistantGroup->maximumSize() != preview)
             ui->parkingAssistantGroup->setFixedSize(preview);
     }
+    ui->previewLayout->activate();
     if (ui->cameraOverlayLayout->contentsMargins() != margins)
         ui->cameraOverlayLayout->setContentsMargins(margins);
     ui->cameraOverlayLayout->activate();
