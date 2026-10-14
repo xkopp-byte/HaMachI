@@ -15,6 +15,7 @@ robot::robot(QObject *parent) : QObject(parent)
     datacounter=0;
     forwardspeed=rotationspeed=0;
     useDirectCommands=1;
+    copyOfLaserData={};
 #ifndef DISABLE_OPENCV
     actIndex=-1;
 #endif
@@ -98,6 +99,11 @@ void robot::setGestureControlEnabled(bool enabled)
 #else
     Q_UNUSED(enabled);
 #endif
+}
+void robot::lidarFusion(bool enabled)
+{
+    std::lock_guard<std::mutex> lock(lidarMutex_);
+    lidarFusionEnabled_=enabled;
 }
 
 #ifndef DISABLE_SKELETON
@@ -249,11 +255,14 @@ int robot::processThisLidar(LaserMeasurement laserData)
         }
         robotlog.close();
     }
-    memcpy( &copyOfLaserData,&laserData,sizeof(LaserMeasurement));
+    {
+        std::lock_guard<std::mutex> lock(lidarMutex_);
+        copyOfLaserData=laserData;
+    }
     //tu mozete robit s datami z lidaru.. napriklad najst prekazky, zapisat do mapy. naplanovat ako sa prekazke vyhnut.
     // ale nic vypoctovo narocne - to iste vlakno ktore cita data z lidaru
    // updateLaserPicture=1;
-    emit publishLidar(copyOfLaserData);
+    emit publishLidar(laserData);
    // update();//tento prikaz prinuti prekreslit obrazovku.. zavola sa paintEvent funkcia
 
 
@@ -267,8 +276,75 @@ int robot::processThisLidar(LaserMeasurement laserData)
 int robot::processThisCamera(cv::Mat cameraData)
 {
 
-    if (!cameraData.empty()) emit publishCamera(cameraData.clone());
+    if (cameraData.empty())
+        return 0;
+
+    LaserMeasurement laserData;
+    bool fusionEnabled;
+    {
+        std::lock_guard<std::mutex> lock(lidarMutex_);
+        laserData=copyOfLaserData;
+        fusionEnabled=lidarFusionEnabled_;
+    }
+
+    cv::Mat output=cameraData.clone();
+    if (fusionEnabled && laserData.numberOfScans>0)
+        output=projectLidarToCamera(output, laserData);
+    emit publishCamera(output);
     return 0;
+}
+
+cv::Mat robot::projectLidarToCamera(const cv::Mat &cameraData,
+                                    const LaserMeasurement &laserData) const
+{
+    constexpr double focalLength=681.743;
+    constexpr double lidarBehindCamera=145.0;
+    constexpr double lidarAboveCamera=95.0;
+    constexpr double degreesToRadians=3.14159265358979323846/180.0;
+
+    cv::Mat projected=cameraData.clone();
+    const double principalX=projected.cols/2.0;
+    const double principalY=projected.rows/2.0;
+    bool anglesAreDegrees=false;
+    for (int i=0; i<laserData.numberOfScans && i<1000; ++i) {
+        if (std::abs(laserData.Data[i].scanAngle)>6.283185307179586) {
+            anglesAreDegrees=true;
+            break;
+        }
+    }
+
+    for (int i=0; i<laserData.numberOfScans && i<1000; ++i) {
+        const LaserData &scan=laserData.Data[i];
+        if (!std::isfinite(scan.scanDistance)
+            || !std::isfinite(scan.scanAngle)
+            || scan.scanDistance<=0.0f)
+            continue;
+
+        const double angle=anglesAreDegrees
+            ? scan.scanAngle*degreesToRadians
+            : scan.scanAngle;
+        const double x=scan.scanDistance*std::cos(angle);
+        const double y=scan.scanDistance*std::sin(angle);
+        const double denominator=x+lidarBehindCamera;
+        if (denominator<=0.0)
+            continue;
+
+        const int pixelX=static_cast<int>(std::lround(
+            principalX-focalLength*y/denominator));
+        const int pixelY=static_cast<int>(std::lround(
+            principalY+focalLength*lidarAboveCamera/denominator));
+        if (pixelX<0 || pixelX>=projected.cols
+            || pixelY<0 || pixelY>=projected.rows)
+            continue;
+
+        const cv::Scalar color=scan.scanDistance<200.0f
+            ? cv::Scalar(0, 0, 255)
+            : scan.scanDistance<350.0f
+                ? cv::Scalar(0, 165, 255)
+                : cv::Scalar(0, 255, 0);
+        cv::circle(projected, cv::Point(pixelX, pixelY), 4, color, -1);
+    }
+    return projected;
 }
 #endif
 

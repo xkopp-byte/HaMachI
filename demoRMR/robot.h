@@ -37,6 +37,7 @@ public:
     //tato funkcia fyzicky posiela hodnoty do robota
     void setSpeed(double forw,double rots);
     void setGestureControlEnabled(bool enabled);
+    void lidarFusion(bool enabled);
 signals:
     void telemetryReceived();
     void publishPosition(double x, double y, double z);
@@ -68,14 +69,18 @@ private:
     int processThisAMCLPosition(float x,float y,float theta);
     #ifndef DISABLE_OPENCV
     int processThisCamera(cv::Mat cameraData);
+    cv::Mat projectLidarToCamera(const cv::Mat &cameraData,
+                                 const LaserMeasurement &laserData) const;
 #endif
 
 
     ///pomocne strukutry aby ste si trosku nerobili race conditions
     LaserMeasurement copyOfLaserData;
+        std::mutex lidarMutex_;
+        bool lidarFusionEnabled_=false;
     #ifndef DISABLE_OPENCV
-    cv::Mat frame[3];
-#endif
+        cv::Mat frame[3];
+    #endif
     ///classa ktora riesi komunikaciu s robotom
     libRobot robotCom;
 
