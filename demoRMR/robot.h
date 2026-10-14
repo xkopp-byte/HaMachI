@@ -3,6 +3,7 @@
 
 #include <QObject>
 #include <QWidget>
+#include <chrono>
 #include "librobot.h"
 #ifndef DISABLE_OPENCV
 #include <opencv2/core/core.hpp>
@@ -35,6 +36,7 @@ public:
     void setSpeedVal(double forw,double rots);
     //tato funkcia fyzicky posiela hodnoty do robota
     void setSpeed(double forw,double rots);
+    void setGestureControlEnabled(bool enabled);
 signals:
     void telemetryReceived();
     void publishPosition(double x, double y, double z);
@@ -88,8 +90,13 @@ private:
 
 #ifndef DISABLE_SKELETON
 int processThisSkeleton(skeleton skeledata);
-int updateSkeletonPicture;
-     skeleton skeleJoints;
+void updateGestureSpeeds();
+std::mutex skeletonMutex_;
+skeleton skeleJoints{};
+bool gestureControlEnabled_;
+double leftWheelSpeed_;
+double rightWheelSpeed_;
+std::chrono::steady_clock::time_point gestureRampTime_;
 #endif
     int useDirectCommands;
 #ifndef DISABLE_AMCL

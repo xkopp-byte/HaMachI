@@ -1,4 +1,12 @@
 #include "robot.h"
+#include <algorithm>
+#include <cmath>
+
+namespace
+{
+constexpr double kMaximumGestureSpeed=200.0;
+constexpr double kBackwardModeDistance=0.05;
+}
 
 robot::robot(QObject *parent) : QObject(parent)
 {
@@ -9,6 +17,12 @@ robot::robot(QObject *parent) : QObject(parent)
     useDirectCommands=1;
 #ifndef DISABLE_OPENCV
     actIndex=-1;
+#endif
+#ifndef DISABLE_SKELETON
+    gestureControlEnabled_=false;
+    leftWheelSpeed_=0;
+    rightWheelSpeed_=0;
+    gestureRampTime_=std::chrono::steady_clock::now();
 #endif
     qRegisterMetaType<LaserMeasurement>("LaserMeasurement");
     #ifndef DISABLE_OPENCV
@@ -70,6 +84,86 @@ void robot::setSpeed(double forw, double rots)
     useDirectCommands=1;
 }
 
+void robot::setGestureControlEnabled(bool enabled)
+{
+#ifndef DISABLE_SKELETON
+    std::lock_guard<std::mutex> lock(commandMutex_);
+    gestureControlEnabled_=enabled;
+    if (!enabled) {
+        leftWheelSpeed_=0;
+        rightWheelSpeed_=0;
+        robotCom.setTranslationSpeed(0);
+        useDirectCommands=1;
+    }
+#else
+    Q_UNUSED(enabled);
+#endif
+}
+
+#ifndef DISABLE_SKELETON
+void robot::updateGestureSpeeds()
+{
+    skeleton gestureData;
+    {
+        std::lock_guard<std::mutex> lock(skeletonMutex_);
+        gestureData=skeleJoints;
+    }
+
+    const klb &leftMiddle=gestureData.joints[left_middle_tip];
+    const klb &rightMiddle=gestureData.joints[right_middle_tip];
+    const double middleTipDistance=std::sqrt(
+        std::pow(leftMiddle.x-rightMiddle.x, 2.0)
+        + std::pow(leftMiddle.y-rightMiddle.y, 2.0)
+        + std::pow(leftMiddle.z-rightMiddle.z, 2.0));
+
+    double targetLeft=0.0;
+    double targetRight=0.0;
+    if (middleTipDistance<=kBackwardModeDistance) {
+        const double leftDistance=gestureData.joints[left_middle_tip].y
+            -gestureData.joints[left_index_tip].y;
+        const double rightDistance=gestureData.joints[right_middle_tip].y
+            -gestureData.joints[right_index_tip].y;
+        targetLeft=leftDistance>0.0
+            ? -kMaximumGestureSpeed*std::min(leftDistance/kBackwardModeDistance, 1.0)
+            : 0.0;
+        targetRight=rightDistance>0.0
+            ? -kMaximumGestureSpeed*std::min(rightDistance/kBackwardModeDistance, 1.0)
+            : 0.0;
+    } else {
+        targetLeft =
+            gestureData.joints[left_middle_tip].y < gestureData.joints[left_middle_mcp].y
+                ? kMaximumGestureSpeed : 0.0;
+        targetRight =
+            gestureData.joints[right_middle_tip].y < gestureData.joints[right_middle_mcp].y
+                ? kMaximumGestureSpeed : 0.0;
+    }
+
+    const auto now=std::chrono::steady_clock::now();
+    const double elapsed=std::chrono::duration<double>(now-gestureRampTime_).count();
+    const double maxChange=kMaximumGestureSpeed*std::min(elapsed/0.5, 1.0);
+    const auto rampTowardsTarget = [maxChange](double current, double target) {
+        const double difference=target-current;
+        if (std::abs(difference)<=maxChange)
+            return target;
+        return current+(difference>0 ? maxChange : -maxChange);
+    };
+    leftWheelSpeed_=rampTowardsTarget(leftWheelSpeed_, targetLeft);
+    rightWheelSpeed_=rampTowardsTarget(rightWheelSpeed_, targetRight);
+    gestureRampTime_=now;
+
+    const double forward=(leftWheelSpeed_+rightWheelSpeed_)/2.0;
+    const double rotation=(rightWheelSpeed_-leftWheelSpeed_)/230.0;
+    if (std::abs(rotation)<1e-9) {
+        robotCom.setTranslationSpeed(static_cast<int>(std::lround(forward)));
+    } else if (std::abs(forward)<1e-9) {
+        robotCom.setRotationSpeed(rotation);
+    } else {
+        robotCom.setArcSpeed(static_cast<int>(std::lround(forward)),
+                             static_cast<int>(std::lround(forward/rotation)));
+    }
+}
+#endif
+
 ///toto je calback na data z robota, ktory ste podhodili robotu vo funkcii initAndStartRobot
 /// vola sa vzdy ked dojdu nove data z robota. nemusite nic riesit, proste sa to stane
 int robot::processThisRobot(TKobukiData robotdata)
@@ -110,6 +204,11 @@ int robot::processThisRobot(TKobukiData robotdata)
     }
     ///---tu sa posielaju rychlosti do robota... vklude zakomentujte ak si chcete spravit svoje
     std::lock_guard<std::mutex> lock(commandMutex_);
+#ifndef DISABLE_SKELETON
+    if (gestureControlEnabled_)
+        updateGestureSpeeds();
+    else
+#endif
     if(useDirectCommands==0)
     {
         if(forwardspeed==0 && rotationspeed!=0)
@@ -178,9 +277,14 @@ int robot::processThisCamera(cv::Mat cameraData)
 int robot::processThisSkeleton(skeleton skeledata)
 {
 
-    memcpy(&skeleJoints,&skeledata,sizeof(skeleton));
+    skeleton publishedSkeleton;
+    {
+        std::lock_guard<std::mutex> lock(skeletonMutex_);
+        skeleJoints=skeledata;
+        publishedSkeleton=skeleJoints;
+    }
 
-    emit publishSkeleton(skeleJoints);
+    emit publishSkeleton(publishedSkeleton);
     return 0;
 }
 #endif

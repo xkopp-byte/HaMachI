@@ -39,6 +39,12 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), ui(new Ui::MainWi
     connect(ui->controlsToggleButton, &QPushButton::toggled, this, [this](bool visible){
         if (!visible) emit stopRequested();
     });
+    connect(ui->enableGesturesCheckBox, &QCheckBox::toggled, this, [this](bool enabled){
+        if (robot_) {
+            robot_->setGestureControlEnabled(enabled);
+            if (!enabled && connected_) robot_->setSpeed(0, 0);
+        }
+    });
     connect(ui->viewComboBox, QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, &MainWindow::setMainView);
     // Adapter connections: replace these when the project backend is ready.
