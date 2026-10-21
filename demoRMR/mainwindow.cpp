@@ -7,6 +7,7 @@
 #include <QMessageBox>
 #include <QSignalBlocker>
 #include <QShortcut>
+#include <cmath>
 
 MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), ui(new Ui::MainWindow)
 {
@@ -14,6 +15,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), ui(new Ui::MainWi
     installEventFilter(this);
     ui->cameraPlaceholderLabel->installEventFilter(this);
     ui->widget->installEventFilter(this);
+    ui->lidarView->installEventFilter(this);
     lightStyle_ = styleSheet();
     // Ctrl+H remains available when its button is inside the collapsed settings.
     auto hiddenControlsShortcut = new QShortcut(QKeySequence("Ctrl+H"), this);
@@ -115,6 +117,11 @@ void MainWindow::setConnectionState(bool connected, const QString &message)
     ui->connectionDotLabel->setStyleSheet(connected ? "color: #16a34a;" : "color: #808890;");
     if (!connected) {
         setCameraImage(QImage());
+        setLidarPoints({});
+        hasLidarData_ = false;
+        leftWheelSpeed_ = rightWheelSpeed_ = 0.0;
+        ui->lidarPlaceholderLabel->show();
+        ui->robotCenterLabel->show();
         setWarning(QString());
         setDanger(QString());
         setObstacleIndicators(false, false, false, false);
@@ -156,6 +163,75 @@ void MainWindow::setCameraImage(const QImage &image)
     updateCameraLayout();
     ui->cameraPlaceholderLabel->setText(image.isNull() ? "No image data" : "");
     ui->cameraPlaceholderLabel->update();
+}
+
+void MainWindow::setLidarPoints(const QVector<QPointF> &points)
+{
+    lidarPoints_ = points;
+    if (!hasLidarData_ && !points.isEmpty()) {
+        hasLidarData_ = true;
+        // The painted robot replaces the static placeholder symbols.
+        ui->lidarPlaceholderLabel->hide();
+        ui->robotCenterLabel->hide();
+    }
+    ui->lidarView->update();
+}
+
+// Robot-centred top view: the robot stays in the middle facing up (Front)
+// and the scan points move around it.
+void MainWindow::paintLidarView()
+{
+    constexpr double viewRangeMm = 2000.0;   // distance shown at the view edge
+    constexpr double robotRadiusMm = 177.0;  // Kobuki base radius
+
+    QWidget *view = ui->lidarView;
+    QPainter painter(view);
+    painter.setRenderHint(QPainter::Antialiasing);
+    painter.fillRect(view->rect(), QColor(13, 35, 53));
+
+    const QPointF center(view->width() / 2.0, view->height() / 2.0);
+    const double radiusPx = qMin(view->width(), view->height()) / 2.0 - 4.0;
+    if (radiusPx <= 0.0) return;
+    const double scale = radiusPx / viewRangeMm;
+
+    // Range rings every half metre.
+    painter.setPen(QPen(QColor(49, 73, 94), 1, Qt::DashLine));
+    painter.setBrush(Qt::NoBrush);
+    for (double ringMm = 500.0; ringMm <= viewRangeMm; ringMm += 500.0)
+        painter.drawEllipse(center, ringMm * scale, ringMm * scale);
+
+    // Same colour scale as the camera overlay: pale blue at 2 m, strong blue up close.
+    painter.setPen(Qt::NoPen);
+    for (const QPointF &p : lidarPoints_) {
+        const double distance = std::hypot(p.x(), p.y());
+        if (distance > viewRangeMm) continue;
+        const double closeness = 1.0 - distance / viewRangeMm;
+        painter.setBrush(QColor(qRound(200 - 200 * closeness),
+                                qRound(220 - 180 * closeness), 255));
+        painter.drawEllipse(QPointF(center.x() + p.y() * scale,
+                                    center.y() - p.x() * scale), 1.8, 1.8);
+    }
+
+    // Predicted wheel tracks for the next 2 seconds at the commanded speeds.
+    if (std::abs(leftWheelSpeed_) >= 1.0 || std::abs(rightWheelSpeed_) >= 1.0) {
+        QVector<QPointF> leftPath, rightPath;
+        robot::predictWheelPaths(leftWheelSpeed_, rightWheelSpeed_, 2.0, leftPath, rightPath);
+        painter.setPen(QPen(QColor(0, 0, 255), 2, Qt::SolidLine, Qt::RoundCap));
+        painter.setBrush(Qt::NoBrush);
+        for (const QVector<QPointF> *path : {&leftPath, &rightPath}) {
+            QPolygonF line;
+            for (const QPointF &p : *path)
+                line << QPointF(center.x() + p.y() * scale, center.y() - p.x() * scale);
+            painter.drawPolyline(line);
+        }
+    }
+
+    // Kobuki: round base with a heading mark pointing forward.
+    const double robotPx = qMax(6.0, robotRadiusMm * scale);
+    painter.setPen(QPen(QColor(226, 231, 236), 1.5));
+    painter.setBrush(QColor(60, 72, 84));
+    painter.drawEllipse(center, robotPx, robotPx);
+    painter.drawLine(center, center - QPointF(0, robotPx));
 }
 
 void MainWindow::setWarning(const QString &message)
@@ -277,6 +353,10 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
         painter.drawImage(target, cameraImage_);
         return true;
     }
+    if (watched == ui->lidarView && event->type() == QEvent::Paint) {
+        paintLidarView();
+        return true;
+    }
     if (watched == this && (event->type() == QEvent::WindowDeactivate || event->type() == QEvent::Close))
         emit stopRequested();
     return QMainWindow::eventFilter(watched, event);
@@ -310,7 +390,35 @@ void MainWindow::startRobotSession(const QString &address, bool simulation)
 #else
     ui->cameraPlaceholderLabel->setText("Camera unavailable: OpenCV disabled");
 #endif
+    connect(robot_, &robot::publishLidar, this, [this, id](const LaserMeasurement &scan){
+        if (id != sessionId_ || !robot_) return;
+        // RPLidar: angle in degrees clockwise from forward, distance in mm.
+        QVector<QPointF> points;
+        points.reserve(scan.numberOfScans);
+        for (int i = 0; i < scan.numberOfScans && i < 1000; ++i) {
+            const LaserData &d = scan.Data[i];
+            if (!std::isfinite(d.scanDistance) || !std::isfinite(d.scanAngle) || d.scanDistance <= 0.0f)
+                continue;
+            const double angle = d.scanAngle * 3.14159265358979323846 / 180.0;
+            points.append(QPointF(d.scanDistance * std::cos(angle), d.scanDistance * std::sin(angle)));
+        }
+        setLidarPoints(points);
+    }, Qt::QueuedConnection);
+#ifndef DISABLE_SKELETON
+    connect(robot_, &robot::viewToggleGesture, this, [this, id]{
+        if (id != sessionId_ || !robot_) return;
+        // Same effect as picking the other entry in the View combo box.
+        ui->viewComboBox->setCurrentIndex(ui->viewComboBox->currentIndex() == 0 ? 1 : 0);
+    }, Qt::QueuedConnection);
+#endif
+    connect(robot_, &robot::publishWheelSpeeds, this, [this, id](double left, double right){
+        if (id != sessionId_ || !robot_) return;
+        leftWheelSpeed_ = left;
+        rightWheelSpeed_ = right;
+        ui->lidarView->update();
+    }, Qt::QueuedConnection);
     ui->viewComboBox->setEnabled(true);
+    robot_->lidarFusion(true);
     robot_->initAndStartRobot(address.toStdString());
     sessionTimer_.start();
 }
