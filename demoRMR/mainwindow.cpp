@@ -17,44 +17,48 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), ui(new Ui::MainWi
     ui->widget->installEventFilter(this);
     ui->lidarView->installEventFilter(this);
     lightStyle_ = styleSheet();
-    // Ctrl+H remains available when its button is inside the collapsed settings.
-    auto hiddenControlsShortcut = new QShortcut(QKeySequence("Ctrl+H"), this);
-    hiddenControlsShortcut->setEnabled(!ui->headerToggleButton->isChecked());
-    connect(hiddenControlsShortcut, &QShortcut::activated, ui->controlsToggleButton, &QPushButton::toggle);
-    connect(ui->headerToggleButton, &QPushButton::toggled, this, [this, hiddenControlsShortcut](bool visible){
-        ui->headerToggleButton->setText(visible ? "Hide settings" : "Show settings");
-        hiddenControlsShortcut->setEnabled(!visible);
-    });
+    // The shortcut restores the toolbar even when its button is hidden.
+    auto controlsShortcut = new QShortcut(QKeySequence("Ctrl+H"), this);
+    connect(controlsShortcut, &QShortcut::activated, ui->controlsToggleButton, &QPushButton::toggle);
 
     connect(ui->themeComboBox, QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, &MainWindow::applyTheme);
     connect(ui->pushButton_9, &QPushButton::clicked, this, &MainWindow::toggleConnection);
     connect(ui->safetyStopButton, &QPushButton::toggled, this, &MainWindow::setSafetyStopActive);
-    connect(ui->pushButton_4, &QPushButton::clicked, this, &MainWindow::stopRequested);
+    connect(ui->pushButton_4, &QPushButton::clicked, this, [this]{
+        stopManualMotion();
+        emit stopRequested();
+    });
     // Existing demo command values are preserved; this window only emits requests.
-    connect(ui->pushButton_2, &QPushButton::pressed, this, [this]{ requestMotion(500, 0); });
-    connect(ui->pushButton_3, &QPushButton::pressed, this, [this]{ requestMotion(-250, 0); });
-    connect(ui->pushButton_6, &QPushButton::pressed, this, [this]{ requestMotion(0, 3.14159/2); });
-    connect(ui->pushButton_5, &QPushButton::pressed, this, [this]{ requestMotion(0, -3.14159/2); });
+    connect(ui->pushButton_2, &QPushButton::pressed, this, [this]{ requestMotion(ui->pushButton_2, 500, 0); });
+    connect(ui->pushButton_3, &QPushButton::pressed, this, [this]{ requestMotion(ui->pushButton_3, -250, 0); });
+    connect(ui->pushButton_6, &QPushButton::pressed, this, [this]{ requestMotion(ui->pushButton_6, 0, 3.14159/2); });
+    connect(ui->pushButton_5, &QPushButton::pressed, this, [this]{ requestMotion(ui->pushButton_5, 0, -3.14159/2); });
     for (auto button : {ui->pushButton_2, ui->pushButton_3, ui->pushButton_6, ui->pushButton_5})
-        connect(button, &QPushButton::released, this, &MainWindow::stopRequested);
-    connect(ui->controlsToggleButton, &QPushButton::toggled, this, [this](bool visible){
-        if (!visible) emit stopRequested();
+        connect(button, &QPushButton::released, this, [this, button]{
+            if (activeManualButton_ == button) stopManualMotion();
+        });
+    const QString visibleToolbarText = ui->controlsToggleButton->text();
+    connect(ui->controlsToggleButton, &QPushButton::toggled, this, [this, visibleToolbarText](bool visible){
+        ui->controlsToggleButton->setText(visible ? visibleToolbarText
+                : ui->controlsToggleButton->property("collapsedText").toString());
     });
-    connect(ui->enableGesturesCheckBox, &QCheckBox::toggled, this, [this](bool enabled){
-        if (robot_ && connected_) {
-            const bool allowed = enabled && !connectionPending_ && !safetyStopActive_;
-            robot_->setGestureControlEnabled(allowed);
-            if (!allowed) robot_->setSpeed(0, 0);
-        }
+    connect(ui->controlModeComboBox, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, &MainWindow::selectControlMode);
+    connect(ui->controlModeComboBox, QOverload<int>::of(&QComboBox::activated), this, [this](int index){
+        // Selecting the current entry also permits explicit re-enabling after a stop.
+        if (controlSource_ == ControlSource::Disabled) selectControlMode(index);
     });
-    connect(ui->viewComboBox, QOverload<int>::of(&QComboBox::currentIndexChanged),
-            this, &MainWindow::setMainView);
+    connect(ui->previewSwapButton, &QPushButton::clicked, this, [this]{
+        setMainView(parkingViewMain_ ? 0 : 1);
+    });
     // Adapter connections: replace these when the project backend is ready.
     connect(this, &MainWindow::connectRequested, this, &MainWindow::startRobotSession);
     connect(this, &MainWindow::disconnectRequested, this, [this]{ endRobotSession(); });
     connect(this, &MainWindow::motionRequested, this, [this](double forward, double rotation){
-        if (robot_ && connected_ && !safetyStopActive_ && telemetryAge_.elapsed() < 2000)
+        if (robot_ && connected_ && !connectionPending_ && !safetyStopActive_
+                && controlSource_ == ControlSource::Manual && activeManualButton_
+                && telemetryAge_.elapsed() < 2000)
             robot_->setSpeed(forward, rotation);
     });
     connect(this, &MainWindow::stopRequested, this, [this]{
@@ -62,7 +66,6 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), ui(new Ui::MainWi
     });
     connect(&sessionTimer_, &QTimer::timeout, this, &MainWindow::checkRobotSession);
     sessionTimer_.setInterval(200);
-    ui->viewComboBox->setToolTip("Select the large view; the other view stays in the top-right preview.");
     setConnectionState(false);
     setSafetyStopActive(ui->safetyStopButton->isChecked());
     applyTheme(ui->themeComboBox->currentIndex());
@@ -74,9 +77,10 @@ void MainWindow::toggleConnection()
 {
     if (connectionPending_) return;
     if (connected_) {
+        setControlSource(ControlSource::Disabled);
         connectionPending_ = true;
         ui->pushButton_9->setEnabled(false);
-        ui->manualGroup->setEnabled(false);
+        updateControlAvailability();
         ui->connectionStatusLabel->setText("Disconnecting...");
         emit stopRequested();
         emit disconnectRequested();
@@ -95,7 +99,9 @@ void MainWindow::toggleConnection()
         QMessageBox::warning(this, "IP address", "Enter an IPv4 address, for example 127.0.0.1.");
         return;
     }
+    setControlSource(ControlSource::Disabled);
     connectionPending_ = true;
+    updateControlAvailability();
     ui->lineEdit->setReadOnly(true);
     ui->pushButton_9->setEnabled(false);
     ui->connectionStatusLabel->setText("Connecting...");
@@ -104,14 +110,15 @@ void MainWindow::toggleConnection()
 
 void MainWindow::setConnectionState(bool connected, const QString &message)
 {
+    const bool changed = connected_ != connected;
     connected_ = connected;
     connectionPending_ = false;
     ui->pushButton_9->setEnabled(true);
     ui->pushButton_9->setText(connected ? "Disconnect" : "Connect");
     ui->lineEdit->setReadOnly(connected);
-    ui->manualGroup->setEnabled(connected && !safetyStopActive_);
-    if (connected && robot_)
-        robot_->setGestureControlEnabled(!safetyStopActive_ && ui->enableGesturesCheckBox->isChecked());
+    if (!connected) setControlSource(ControlSource::Disabled);
+    else if (changed) selectControlMode(ui->controlModeComboBox->currentIndex());
+    updateControlAvailability();
     if (connected && safetyStopActive_) emit stopRequested();
     ui->connectionStatusLabel->setText(message.isEmpty() ? (connected ? "Connected" : "Disconnected") : message);
     ui->connectionDotLabel->setStyleSheet(connected ? "color: #16a34a;" : "color: #808890;");
@@ -133,27 +140,72 @@ void MainWindow::setSafetyStopActive(bool active)
 {
     const bool changed = safetyStopActive_ != active;
     safetyStopActive_ = active;
-    if (active) {
-        // Gesture callbacks must not override the stop; require explicit re-enabling.
-        ui->enableGesturesCheckBox->setChecked(false);
-        if (robot_ && connected_) robot_->setGestureControlEnabled(false);
-    }
-    ui->gesturesGroup->setEnabled(!active);
+    if (active) setControlSource(ControlSource::Disabled);
     {
         const QSignalBlocker blocker(ui->safetyStopButton);
         ui->safetyStopButton->setChecked(active);
-        ui->safetyStopButton->setText(active ? "SAFETY STOP ON" : "SAFETY STOP OFF");
+        ui->safetyStopButton->setText(active ? "SAFETY STOP\nON" : "SAFETY STOP\nOFF");
     }
-    ui->manualGroup->setEnabled(connected_ && !connectionPending_ && !active);
+    updateControlAvailability();
     if (changed) {
-        if (active) emit stopRequested();
         emit safetyStopChanged(active);
     }
 }
 
-void MainWindow::requestMotion(double forward, double rotation)
+void MainWindow::setControlSource(ControlSource source)
 {
-    if (connected_ && !connectionPending_ && !safetyStopActive_) emit motionRequested(forward, rotation);
+    if (!connected_ || connectionPending_ || safetyStopActive_)
+        source = ControlSource::Disabled;
+#ifdef DISABLE_SKELETON
+    if (source == ControlSource::Gestures) source = ControlSource::Disabled;
+#endif
+
+    const bool changed = controlSource_ != source;
+    controlSource_ = ControlSource::Disabled;
+    stopManualMotion();
+    // Reuse the existing gesture enable switch; gesture recognition stays in the backend.
+    if (robot_) robot_->setGestureControlEnabled(false);
+    emit stopRequested();
+    controlSource_ = source;
+    updateControlAvailability();
+    if (robot_ && source == ControlSource::Gestures)
+        robot_->setGestureControlEnabled(true);
+    if (changed) emit controlSourceChanged(source);
+}
+
+void MainWindow::selectControlMode(int index)
+{
+    setControlSource(index == 0 ? ControlSource::Gestures
+                               : index == 1 ? ControlSource::Manual : ControlSource::Disabled);
+}
+
+void MainWindow::updateControlAvailability()
+{
+    const bool allowed = connected_ && !connectionPending_ && !safetyStopActive_;
+    ui->controlModeComboBox->setEnabled(!connectionPending_ && !safetyStopActive_);
+    const bool manual = allowed && controlSource_ == ControlSource::Manual;
+    ui->manualGroup->setEnabled(manual);
+    // Only the selected control mode controls the bottom panel, independently of the toolbar.
+    ui->controlsPanel->setVisible(ui->controlModeComboBox->currentIndex() == 1);
+}
+
+void MainWindow::stopManualMotion()
+{
+    if (!activeManualButton_) return;
+    auto button = activeManualButton_;
+    activeManualButton_ = nullptr;
+    button->setDown(false);
+    emit stopRequested();
+}
+
+void MainWindow::requestMotion(QPushButton *button, double forward, double rotation)
+{
+    if (!connected_ || connectionPending_ || safetyStopActive_
+            || controlSource_ != ControlSource::Manual || !ui->controlsPanel->isVisible()
+            || !button->isEnabled() || !button->isDown()) return;
+    if (activeManualButton_ && activeManualButton_ != button) stopManualMotion();
+    activeManualButton_ = button;
+    emit motionRequested(forward, rotation);
 }
 
 void MainWindow::setCameraImage(const QImage &image)
@@ -269,13 +321,14 @@ void MainWindow::setMainView(int index)
     parkingViewMain_ = index == 1;
     ui->cameraOverlayLayout->removeWidget(ui->cameraPlaceholderLabel);
     ui->cameraOverlayLayout->removeWidget(ui->parkingAssistantGroup);
+    ui->previewLayout->removeWidget(ui->cameraPlaceholderLabel);
+    ui->previewLayout->removeWidget(ui->parkingAssistantGroup);
     if (parkingViewMain_) {
         ui->parkingAssistantGroup->setMinimumSize(0, 0);
         ui->parkingAssistantGroup->setMaximumSize(QWIDGETSIZE_MAX, QWIDGETSIZE_MAX);
         ui->parkingAssistantGroup->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
         ui->cameraOverlayLayout->addWidget(ui->parkingAssistantGroup, 0, 0, 3, 3);
-        ui->cameraOverlayLayout->addWidget(ui->cameraPlaceholderLabel, 0, 2,
-                                           Qt::AlignRight | Qt::AlignTop);
+        ui->previewLayout->insertWidget(0, ui->cameraPlaceholderLabel, 0, Qt::AlignRight);
         ui->parkingAssistantGroup->lower();
         ui->cameraPlaceholderLabel->raise();
     } else {
@@ -286,11 +339,16 @@ void MainWindow::setMainView(int index)
         ui->parkingAssistantGroup->setMaximumSize(230, 230);
         ui->parkingAssistantGroup->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Preferred);
         ui->cameraOverlayLayout->addWidget(ui->cameraPlaceholderLabel, 0, 0, 3, 3);
-        ui->cameraOverlayLayout->addWidget(ui->parkingAssistantGroup, 0, 2,
-                                           Qt::AlignRight | Qt::AlignTop);
+        ui->previewLayout->insertWidget(0, ui->parkingAssistantGroup, 0, Qt::AlignRight);
         ui->cameraPlaceholderLabel->lower();
         ui->parkingAssistantGroup->raise();
     }
+    ui->cameraPlaceholderLabel->show();
+    ui->parkingAssistantGroup->show();
+    ui->previewSwapButton->setToolTip(ui->previewSwapButton->property(
+            parkingViewMain_ ? "cameraToolTip" : "parkingToolTip").toString());
+    ui->previewSwapButton->raise();
+    ui->previewPanel->raise();
     for (QWidget *overlay : {static_cast<QWidget*>(ui->warningFrame),
                              static_cast<QWidget*>(ui->dangerFrame),
                              static_cast<QWidget*>(ui->frontObstacleIndicator),
@@ -298,6 +356,7 @@ void MainWindow::setMainView(int index)
                              static_cast<QWidget*>(ui->leftObstacleIndicator),
                              static_cast<QWidget*>(ui->rightObstacleIndicator)})
         overlay->raise();
+    ui->safetyStopOverlay->raise();
     updateCameraLayout();
     ui->cameraOverlayLayout->activate();
     ui->cameraPlaceholderLabel->update();
@@ -320,20 +379,26 @@ void MainWindow::updateCameraLayout()
                            border + extraHeight - extraHeight / 2);
         mainSize = fitted;
     }
-    // About 30% of the shorter side; bounds keep the preview readable and unobtrusive.
-    const int edge = qBound(140, qRound(qMin(mainSize.width(), mainSize.height()) * 0.30), 230);
     if (parkingViewMain_) {
-        const QSize preview = cameraImage_.isNull() ? QSize(edge, qRound(edge * 2.0 / 3.0))
-                : cameraImage_.size().scaled(QSize(edge, edge), Qt::KeepAspectRatio);
+        // A landscape camera needs a wider budget than the square LiDAR minimap.
+        const int previewWidth = qBound(240, qRound(mainSize.width() * 0.28), 420);
+        const int previewHeight = qBound(120, qRound(mainSize.height() * 0.45), 260);
+        const QSize budget(previewWidth, previewHeight);
+        const QSize fittedPreview = (cameraImage_.isNull() ? QSize(16, 9) : cameraImage_.size())
+                .scaled(budget, Qt::KeepAspectRatio);
+        const QSize preview(qMax(140, fittedPreview.width()), fittedPreview.height());
         if (ui->cameraPlaceholderLabel->minimumSize() != preview
                 || ui->cameraPlaceholderLabel->maximumSize() != preview)
             ui->cameraPlaceholderLabel->setFixedSize(preview);
     } else {
+        // Keep the square LiDAR minimap proportional to the main camera's height.
+        const int edge = qBound(140, qRound(qMin(mainSize.width(), mainSize.height()) * 0.30), 230);
         const QSize preview(edge, edge);
         if (ui->parkingAssistantGroup->minimumSize() != preview
                 || ui->parkingAssistantGroup->maximumSize() != preview)
             ui->parkingAssistantGroup->setFixedSize(preview);
     }
+    ui->previewLayout->activate();
     if (ui->cameraOverlayLayout->contentsMargins() != margins)
         ui->cameraOverlayLayout->setContentsMargins(margins);
     ui->cameraOverlayLayout->activate();
@@ -358,7 +423,7 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
         return true;
     }
     if (watched == this && (event->type() == QEvent::WindowDeactivate || event->type() == QEvent::Close))
-        emit stopRequested();
+        setControlSource(ControlSource::Disabled);
     return QMainWindow::eventFilter(watched, event);
 }
 
@@ -425,11 +490,11 @@ void MainWindow::startRobotSession(const QString &address, bool simulation)
 
 void MainWindow::endRobotSession(const QString &message)
 {
+    setControlSource(ControlSource::Disabled);
     sessionTimer_.stop();
     ++sessionId_; // Ignore queued frames/telemetry from the old session.
     if (robot_) {
         if (connected_) {
-            robot_->setGestureControlEnabled(false);
             robot_->setSpeed(0, 0);
         }
         robot_->stopRobot();
@@ -437,7 +502,6 @@ void MainWindow::endRobotSession(const QString &message)
         robot_ = nullptr;
     }
     imageAge_.invalidate();
-    ui->viewComboBox->setEnabled(true);
     setConnectionState(false, message);
 }
 
