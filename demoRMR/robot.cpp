@@ -4,8 +4,65 @@
 
 namespace
 {
-constexpr double kMaximumGestureSpeed=200.0;
+constexpr double kMaximumGestureSpeed=400.0; // mm/s = 0.4 m/s
 constexpr double kBackwardModeDistance=0.05;
+// Index knuckle-to-tip length relative to palm length (wrist -> middle MCP).
+constexpr double kFingerCurledRatio=0.25;   // at or below: 0 speed
+constexpr double kFingerExtendedRatio=0.80; // at or above: full speed
+constexpr double kWheelBase=230.0; // mm between Kobuki wheels
+constexpr double kPredictionSeconds=2.0;
+// View-switch gesture: thumb and pinky tips of both hands form a square.
+constexpr double kSquareSideTolerance=0.20; // each side within +-20% of the mean
+constexpr double kSquareMinimumSide=0.05;   // normalised; rejects untracked (0,0) hands
+constexpr double kViewToggleCooldownSeconds=3.0;
+
+#ifndef DISABLE_OPENCV
+// Camera model shared by the LiDAR overlay and the predicted path.
+constexpr double kFocalLength=681.743;
+constexpr double kLidarBehindCamera=145.0;
+constexpr double kLidarAboveCamera=95.0;
+
+// Projects a point in the LiDAR plane (robot frame, mm: x forward, y right).
+bool projectToCamera(const cv::Mat &image, double x, double y, cv::Point &pixel)
+{
+    const double denominator=x+kLidarBehindCamera;
+    if (denominator<=1.0)
+        return false;
+    pixel=cv::Point(
+        static_cast<int>(std::lround(image.cols/2.0+kFocalLength*y/denominator)),
+        static_cast<int>(std::lround(image.rows/2.0+kFocalLength*kLidarAboveCamera/denominator)));
+    return true;
+}
+#endif
+}
+
+void robot::predictWheelPaths(double leftSpeed, double rightSpeed, double seconds,
+                              QVector<QPointF> &leftPath, QVector<QPointF> &rightPath)
+{
+    constexpr int steps=30;
+    const double v=(leftSpeed+rightSpeed)/2.0;
+    const double omega=(rightSpeed-leftSpeed)/kWheelBase; // + = turning left
+    const double dt=seconds/steps;
+    // Integrate in (forward, left) coordinates, output as (forward, right).
+    double forward=0.0, left=0.0, heading=0.0;
+    leftPath.clear();
+    rightPath.clear();
+    for (int i=0; i<=steps; ++i) {
+        const double offsetForward=-std::sin(heading)*kWheelBase/2.0;
+        const double offsetLeft=std::cos(heading)*kWheelBase/2.0;
+        leftPath.append(QPointF(forward+offsetForward, -(left+offsetLeft)));
+        rightPath.append(QPointF(forward-offsetForward, -(left-offsetLeft)));
+        const double midHeading=heading+omega*dt/2.0;
+        forward+=v*std::cos(midHeading)*dt;
+        left+=v*std::sin(midHeading)*dt;
+        heading+=omega*dt;
+    }
+}
+
+void robot::setCommandedWheels(double forward, double rotation)
+{
+    commandedLeft_=forward-rotation*kWheelBase/2.0;
+    commandedRight_=forward+rotation*kWheelBase/2.0;
 }
 
 robot::robot(QObject *parent) : QObject(parent)
@@ -15,6 +72,7 @@ robot::robot(QObject *parent) : QObject(parent)
     datacounter=0;
     forwardspeed=rotationspeed=0;
     useDirectCommands=1;
+    copyOfLaserData={};
 #ifndef DISABLE_OPENCV
     actIndex=-1;
 #endif
@@ -81,6 +139,7 @@ void robot::setSpeed(double forw, double rots)
         robotCom.setArcSpeed(forw,forw/rots);
     else
         robotCom.setTranslationSpeed(0);
+    setCommandedWheels(forw, rots);
     useDirectCommands=1;
 }
 
@@ -93,11 +152,17 @@ void robot::setGestureControlEnabled(bool enabled)
         leftWheelSpeed_=0;
         rightWheelSpeed_=0;
         robotCom.setTranslationSpeed(0);
+        setCommandedWheels(0, 0);
         useDirectCommands=1;
     }
 #else
     Q_UNUSED(enabled);
 #endif
+}
+void robot::lidarFusion(bool enabled)
+{
+    std::lock_guard<std::mutex> lock(lidarMutex_);
+    lidarFusionEnabled_=enabled;
 }
 
 #ifndef DISABLE_SKELETON
@@ -119,23 +184,44 @@ void robot::updateGestureSpeeds()
     double targetLeft=0.0;
     double targetRight=0.0;
     if (middleTipDistance<=kBackwardModeDistance) {
-        const double leftDistance=gestureData.joints[left_middle_tip].y
-            -gestureData.joints[left_index_tip].y;
-        const double rightDistance=gestureData.joints[right_middle_tip].y
-            -gestureData.joints[right_index_tip].y;
-        targetLeft=leftDistance>0.0
-            ? -kMaximumGestureSpeed*std::min(leftDistance/kBackwardModeDistance, 1.0)
-            : 0.0;
-        targetRight=rightDistance>0.0
-            ? -kMaximumGestureSpeed*std::min(rightDistance/kBackwardModeDistance, 1.0)
-            : 0.0;
+        // Reverse speed is linear in the index knuckle-to-tip distance,
+        // normalised by palm length so it does not depend on hand distance.
+        const auto planarDistance = [](const klb &a, const klb &b) {
+            return std::hypot(a.x-b.x, a.y-b.y);
+        };
+        const auto reverseSpeed = [&](int wrist, int middleMcp,
+                                      int indexMcp, int indexTip) {
+            const double palm=planarDistance(gestureData.joints[wrist],
+                                             gestureData.joints[middleMcp]);
+            if (palm<1e-6)
+                return 0.0; // hand not tracked
+            const double extension=planarDistance(gestureData.joints[indexMcp],
+                                                  gestureData.joints[indexTip])/palm;
+            const double ratio=(extension-kFingerCurledRatio)
+                /(kFingerExtendedRatio-kFingerCurledRatio);
+            return -kMaximumGestureSpeed*std::max(0.0, std::min(ratio, 1.0));
+        };
+        targetLeft=reverseSpeed(left_wrist, left_middle_mcp,
+                                left_index_mcp, left_index_tip);
+        targetRight=reverseSpeed(right_wrist, right_middle_mcp,
+                                 right_index_mcp, right_index_tip);
     } else {
-        targetLeft =
-            gestureData.joints[left_middle_tip].y < gestureData.joints[left_middle_mcp].y
-                ? kMaximumGestureSpeed : 0.0;
-        targetRight =
-            gestureData.joints[right_middle_tip].y < gestureData.joints[right_middle_mcp].y
-                ? kMaximumGestureSpeed : 0.0;
+        // Forward speed follows the on-screen angle of the middle finger
+        // (knuckle -> tip) in 5 steps of 18 deg each: 0-18 deg (tip level
+        // with the knuckle) or pointing down = 0, 72-90 deg = full speed.
+        const auto forwardSpeed = [&](int middleMcp, int middleTip) {
+            const klb &mcp=gestureData.joints[middleMcp];
+            const klb &tip=gestureData.joints[middleTip];
+            const double up=mcp.y-tip.y; // screen y grows downwards
+            const double sideways=std::abs(tip.x-mcp.x);
+            if (up<=0.0)
+                return 0.0;
+            const double angleDegrees=std::atan2(up, sideways)*180.0/3.14159265358979323846;
+            const int segment=std::min(static_cast<int>(angleDegrees/18.0), 4);
+            return kMaximumGestureSpeed*segment/4.0;
+        };
+        targetLeft=forwardSpeed(left_middle_mcp, left_middle_tip);
+        targetRight=forwardSpeed(right_middle_mcp, right_middle_tip);
     }
 
     const auto now=std::chrono::steady_clock::now();
@@ -150,6 +236,8 @@ void robot::updateGestureSpeeds()
     leftWheelSpeed_=rampTowardsTarget(leftWheelSpeed_, targetLeft);
     rightWheelSpeed_=rampTowardsTarget(rightWheelSpeed_, targetRight);
     gestureRampTime_=now;
+    commandedLeft_=leftWheelSpeed_;
+    commandedRight_=rightWheelSpeed_;
 
     const double forward=(leftWheelSpeed_+rightWheelSpeed_)/2.0;
     const double rotation=(rightWheelSpeed_-leftWheelSpeed_)/230.0;
@@ -219,7 +307,10 @@ int robot::processThisRobot(TKobukiData robotdata)
             robotCom.setArcSpeed(forwardspeed,forwardspeed/rotationspeed);
         else
             robotCom.setTranslationSpeed(0);
+        setCommandedWheels(forwardspeed, rotationspeed);
     }
+    if (datacounter%5==0)
+        emit publishWheelSpeeds(commandedLeft_, commandedRight_);
     emit telemetryReceived();
     datacounter++;
 
@@ -249,11 +340,14 @@ int robot::processThisLidar(LaserMeasurement laserData)
         }
         robotlog.close();
     }
-    memcpy( &copyOfLaserData,&laserData,sizeof(LaserMeasurement));
+    {
+        std::lock_guard<std::mutex> lock(lidarMutex_);
+        copyOfLaserData=laserData;
+    }
     //tu mozete robit s datami z lidaru.. napriklad najst prekazky, zapisat do mapy. naplanovat ako sa prekazke vyhnut.
     // ale nic vypoctovo narocne - to iste vlakno ktore cita data z lidaru
    // updateLaserPicture=1;
-    emit publishLidar(copyOfLaserData);
+    emit publishLidar(laserData);
    // update();//tento prikaz prinuti prekreslit obrazovku.. zavola sa paintEvent funkcia
 
 
@@ -267,8 +361,84 @@ int robot::processThisLidar(LaserMeasurement laserData)
 int robot::processThisCamera(cv::Mat cameraData)
 {
 
-    if (!cameraData.empty()) emit publishCamera(cameraData.clone());
+    if (cameraData.empty())
+        return 0;
+
+    LaserMeasurement laserData;
+    bool fusionEnabled;
+    {
+        std::lock_guard<std::mutex> lock(lidarMutex_);
+        laserData=copyOfLaserData;
+        fusionEnabled=lidarFusionEnabled_;
+    }
+
+    double leftSpeed, rightSpeed;
+    {
+        std::lock_guard<std::mutex> lock(commandMutex_);
+        leftSpeed=commandedLeft_;
+        rightSpeed=commandedRight_;
+    }
+
+    cv::Mat output=cameraData.clone();
+    if (fusionEnabled && laserData.numberOfScans>0) output=projectLidarToCamera(output, laserData);
+    if (fusionEnabled) drawPredictedPath(output, leftSpeed, rightSpeed);
+    emit publishCamera(output);
     return 0;
+}
+
+cv::Mat robot::projectLidarToCamera(const cv::Mat &cameraData,
+                                    const LaserMeasurement &laserData) const
+{
+    constexpr double degreesToRadians=3.14159265358979323846/180.0;
+
+    cv::Mat projected=cameraData.clone();
+    for (int i=0; i<laserData.numberOfScans && i<1000; ++i) {
+        const LaserData &scan=laserData.Data[i];
+        if (!std::isfinite(scan.scanDistance)
+            || !std::isfinite(scan.scanAngle)
+            || scan.scanDistance<=0.0f)
+            continue;
+
+        // RPLidar: angle in degrees, clockwise from forward; distance in mm.
+        const double angle=scan.scanAngle*degreesToRadians;
+        const double x=scan.scanDistance*std::cos(angle);
+        const double y=scan.scanDistance*std::sin(angle); // +y = right
+        if (x<=0.0)
+            continue; // behind the robot, never in the camera view
+        if (scan.scanDistance>2000.0f)
+            continue; // only show obstacles within 2 m
+        cv::Point pixel;
+        if (!projectToCamera(projected, x, y, pixel)
+            || pixel.x<0 || pixel.x>=projected.cols
+            || pixel.y<0 || pixel.y>=projected.rows)
+            continue;
+
+        // Pale blue at 2 m, deepening to strong blue as the obstacle gets closer.
+        const double closeness=1.0-scan.scanDistance/2000.0;
+        const cv::Scalar color(255,                    // B
+                               220-180*closeness,      // G
+                               200-200*closeness);     // R
+        cv::circle(projected, pixel, 4, color, -1);
+    }
+    return projected;
+}
+
+// Wheel tracks for the next second, projected in the LiDAR plane like the scan.
+void robot::drawPredictedPath(cv::Mat &image, double leftSpeed, double rightSpeed) const
+{
+    if (std::abs(leftSpeed)<1.0 && std::abs(rightSpeed)<1.0)
+        return;
+    QVector<QPointF> leftPath, rightPath;
+    predictWheelPaths(leftSpeed, rightSpeed, kPredictionSeconds, leftPath, rightPath);
+    const cv::Scalar color(255, 0, 0); // BGR blue
+    for (const QVector<QPointF> *path : {&leftPath, &rightPath}) {
+        for (int i=1; i<path->size(); ++i) {
+            cv::Point from, to;
+            if (projectToCamera(image, (*path)[i-1].x(), (*path)[i-1].y(), from)
+                && projectToCamera(image, (*path)[i].x(), (*path)[i].y(), to))
+                cv::line(image, from, to, color, 3, cv::LINE_AA); // clipped by OpenCV
+        }
+    }
 }
 #endif
 
@@ -284,7 +454,45 @@ int robot::processThisSkeleton(skeleton skeledata)
         publishedSkeleton=skeleJoints;
     }
 
+    bool gesturesEnabled;
+    {
+        std::lock_guard<std::mutex> lock(commandMutex_);
+        gesturesEnabled=gestureControlEnabled_;
+    }
+    if (gesturesEnabled && isViewSquareGesture(skeledata)) {
+        const auto now=std::chrono::steady_clock::now();
+        if (std::chrono::duration<double>(now-lastViewToggle_).count()>=kViewToggleCooldownSeconds) {
+            lastViewToggle_=now;
+            emit viewToggleGesture();
+        }
+    }
+
     emit publishSkeleton(publishedSkeleton);
     return 0;
+}
+
+// Corners in order around the square: left thumb, right thumb, right pinky, left pinky.
+bool robot::isViewSquareGesture(const skeleton &data)
+{
+    const klb *corners[4]={&data.joints[left_thumb_tip], &data.joints[right_thumb_tip],
+                           &data.joints[right_pink_tip], &data.joints[left_pink_tip]};
+    const auto distance = [](const klb *a, const klb *b) {
+        return std::hypot(a->x-b->x, a->y-b->y);
+    };
+    double sides[4];
+    double meanSide=0.0;
+    for (int i=0; i<4; ++i) {
+        sides[i]=distance(corners[i], corners[(i+1)%4]);
+        meanSide+=sides[i]/4.0;
+    }
+    if (meanSide<kSquareMinimumSide)
+        return false;
+    for (double side : sides)
+        if (std::abs(side-meanSide)>kSquareSideTolerance*meanSide)
+            return false;
+    // Equal diagonals rule out a flattened rhombus.
+    const double diagonalA=distance(corners[0], corners[2]);
+    const double diagonalB=distance(corners[1], corners[3]);
+    return std::abs(diagonalA-diagonalB)<=kSquareSideTolerance*std::max(diagonalA, diagonalB);
 }
 #endif

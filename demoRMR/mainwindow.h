@@ -10,6 +10,8 @@
 #include <QImage>
 #include <QTimer>
 #include <QElapsedTimer>
+#include <QPointF>
+#include <QVector>
 class robot;
 class QPushButton;
 namespace Ui { class MainWindow; }
@@ -62,12 +64,19 @@ private:
     void applyTheme(int index);
     void updateCameraLayout();
     void setMainView(int index);
+    void setLidarPoints(const QVector<QPointF> &points);
+    void paintLidarView();
     bool parkingViewMain_ = false;
     Ui::MainWindow *ui;
     bool safetyStopActive_ = false;
     bool connected_ = false;
     bool connectionPending_ = false;
     QImage cameraImage_;
+    // LiDAR scan in robot frame, mm: x = forward, y = right.
+    QVector<QPointF> lidarPoints_;
+    bool hasLidarData_ = false;
+    double leftWheelSpeed_ = 0.0;  // commanded, mm/s
+    double rightWheelSpeed_ = 0.0; // commanded, mm/s
     QString lightStyle_;
     QString warningText_;
 };

@@ -4,6 +4,8 @@
 #include <QObject>
 #include <QWidget>
 #include <chrono>
+#include <QPointF>
+#include <QVector>
 #include "librobot.h"
 #ifndef DISABLE_OPENCV
 #include <opencv2/core/core.hpp>
@@ -37,7 +39,13 @@ public:
     //tato funkcia fyzicky posiela hodnoty do robota
     void setSpeed(double forw,double rots);
     void setGestureControlEnabled(bool enabled);
+    void lidarFusion(bool enabled);
+    // Wheel tracks (robot frame, mm: x forward, y right) for the given wheel
+    // speeds (mm/s) held for `seconds`, starting at the current wheel positions.
+    static void predictWheelPaths(double leftSpeed, double rightSpeed, double seconds,
+                                  QVector<QPointF> &leftPath, QVector<QPointF> &rightPath);
 signals:
+    void publishWheelSpeeds(double leftSpeed, double rightSpeed);
     void telemetryReceived();
     void publishPosition(double x, double y, double z);
     void publishAMCLPosition(double x, double y, double z);
@@ -47,6 +55,7 @@ signals:
 #endif
 #ifndef DISABLE_SKELETON
 void publishSkeleton(const skeleton &skeledata);
+void viewToggleGesture(); // thumbs + pinkies square, at most once per 3 s
 #endif
 private:
     std::mutex commandMutex_;
@@ -68,14 +77,22 @@ private:
     int processThisAMCLPosition(float x,float y,float theta);
     #ifndef DISABLE_OPENCV
     int processThisCamera(cv::Mat cameraData);
+    cv::Mat projectLidarToCamera(const cv::Mat &cameraData,
+                                 const LaserMeasurement &laserData) const;
+    void drawPredictedPath(cv::Mat &image, double leftSpeed, double rightSpeed) const;
 #endif
+    void setCommandedWheels(double forward, double rotation); // caller holds commandMutex_
+    double commandedLeft_=0.0;  // mm/s, guarded by commandMutex_
+    double commandedRight_=0.0; // mm/s, guarded by commandMutex_
 
 
     ///pomocne strukutry aby ste si trosku nerobili race conditions
     LaserMeasurement copyOfLaserData;
+        std::mutex lidarMutex_;
+        bool lidarFusionEnabled_=false;
     #ifndef DISABLE_OPENCV
-    cv::Mat frame[3];
-#endif
+        cv::Mat frame[3];
+    #endif
     ///classa ktora riesi komunikaciu s robotom
     libRobot robotCom;
 
@@ -91,6 +108,8 @@ private:
 #ifndef DISABLE_SKELETON
 int processThisSkeleton(skeleton skeledata);
 void updateGestureSpeeds();
+static bool isViewSquareGesture(const skeleton &data);
+std::chrono::steady_clock::time_point lastViewToggle_{};
 std::mutex skeletonMutex_;
 skeleton skeleJoints{};
 bool gestureControlEnabled_;
