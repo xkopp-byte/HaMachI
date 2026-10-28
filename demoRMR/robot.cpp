@@ -6,9 +6,6 @@ namespace
 {
 constexpr double kMaximumGestureSpeed=400.0; // mm/s = 0.4 m/s
 constexpr double kBackwardModeDistance=0.05;
-// Index knuckle-to-tip length relative to palm length (wrist -> middle MCP).
-constexpr double kFingerCurledRatio=0.25;   // at or below: 0 speed
-constexpr double kFingerExtendedRatio=0.80; // at or above: full speed
 constexpr double kWheelBase=230.0; // mm between Kobuki wheels
 constexpr double kPredictionSeconds=2.0;
 // View-switch gesture: thumb and pinky tips of both hands form a square.
@@ -17,7 +14,7 @@ constexpr double kSquareMinimumSide=0.05;   // normalised; rejects untracked (0,
 constexpr double kViewToggleCooldownSeconds=3.0;
 // Below this LiDAR distance the maximum speed is halved.
 constexpr double kMaximumSpeed=500.0;         // mm/s, fastest manual command
-constexpr double kSlowZoneDistance=500.0;     // mm = 0.5 m
+constexpr double kSlowZoneDistance=300.0;     // mm = 0.3 m
 constexpr double kMinimumValidDistance=100.0; // mm, shorter readings are noise
 
 #ifndef DISABLE_OPENCV
@@ -200,47 +197,31 @@ void robot::updateGestureSpeeds()
         + std::pow(leftMiddle.y-rightMiddle.y, 2.0)
         + std::pow(leftMiddle.z-rightMiddle.z, 2.0));
 
+    // Speed follows the on-screen angle of a finger (knuckle -> tip) in
+    // 5 steps of 18 deg each: 0-18 deg (tip level with the knuckle) or
+    // pointing down = 0, 72-90 deg = full speed.
+    const auto fingerSpeed = [&](int knuckle, int fingerTip) {
+        const klb &mcp=gestureData.joints[knuckle];
+        const klb &tip=gestureData.joints[fingerTip];
+        const double up=mcp.y-tip.y; // screen y grows downwards
+        const double sideways=std::abs(tip.x-mcp.x);
+        if (up<=0.0)
+            return 0.0;
+        const double angleDegrees=std::atan2(up, sideways)*180.0/3.14159265358979323846;
+        const int segment=std::min(static_cast<int>(angleDegrees/18.0), 4);
+        return maximumSpeed*segment/4.0;
+    };
+
     double targetLeft=0.0;
     double targetRight=0.0;
     if (middleTipDistance<=kBackwardModeDistance) {
-        // Reverse speed is linear in the index knuckle-to-tip distance,
-        // normalised by palm length so it does not depend on hand distance.
-        const auto planarDistance = [](const klb &a, const klb &b) {
-            return std::hypot(a.x-b.x, a.y-b.y);
-        };
-        const auto reverseSpeed = [&](int wrist, int middleMcp,
-                                      int indexMcp, int indexTip) {
-            const double palm=planarDistance(gestureData.joints[wrist],
-                                             gestureData.joints[middleMcp]);
-            if (palm<1e-6)
-                return 0.0; // hand not tracked
-            const double extension=planarDistance(gestureData.joints[indexMcp],
-                                                  gestureData.joints[indexTip])/palm;
-            const double ratio=(extension-kFingerCurledRatio)
-                /(kFingerExtendedRatio-kFingerCurledRatio);
-            return -maximumSpeed*std::max(0.0, std::min(ratio, 1.0));
-        };
-        targetLeft=reverseSpeed(left_wrist, left_middle_mcp,
-                                left_index_mcp, left_index_tip);
-        targetRight=reverseSpeed(right_wrist, right_middle_mcp,
-                                 right_index_mcp, right_index_tip);
+        // Reverse: index finger angle drives each wheel backwards.
+        targetLeft=-fingerSpeed(left_index_mcp, left_index_tip);
+        targetRight=-fingerSpeed(right_index_mcp, right_index_tip);
     } else {
-        // Forward speed follows the on-screen angle of the middle finger
-        // (knuckle -> tip) in 5 steps of 18 deg each: 0-18 deg (tip level
-        // with the knuckle) or pointing down = 0, 72-90 deg = full speed.
-        const auto forwardSpeed = [&](int middleMcp, int middleTip) {
-            const klb &mcp=gestureData.joints[middleMcp];
-            const klb &tip=gestureData.joints[middleTip];
-            const double up=mcp.y-tip.y; // screen y grows downwards
-            const double sideways=std::abs(tip.x-mcp.x);
-            if (up<=0.0)
-                return 0.0;
-            const double angleDegrees=std::atan2(up, sideways)*180.0/3.14159265358979323846;
-            const int segment=std::min(static_cast<int>(angleDegrees/18.0), 4);
-            return maximumSpeed*segment/4.0;
-        };
-        targetLeft=forwardSpeed(left_middle_mcp, left_middle_tip);
-        targetRight=forwardSpeed(right_middle_mcp, right_middle_tip);
+        // Forward: middle finger angle drives each wheel forwards.
+        targetLeft=fingerSpeed(left_middle_mcp, left_middle_tip);
+        targetRight=fingerSpeed(right_middle_mcp, right_middle_tip);
     }
 
     const auto now=std::chrono::steady_clock::now();
