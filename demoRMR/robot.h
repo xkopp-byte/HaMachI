@@ -3,6 +3,7 @@
 
 #include <QObject>
 #include <QWidget>
+#include <atomic>
 #include <chrono>
 #include <QPointF>
 #include <QVector>
@@ -82,8 +83,14 @@ private:
     void drawPredictedPath(cv::Mat &image, double leftSpeed, double rightSpeed) const;
 #endif
     void setCommandedWheels(double forward, double rotation); // caller holds commandMutex_
+    // Sends the speed to the robot, halved near obstacles. Caller holds commandMutex_.
+    void sendSpeed(double forw, double rots);
     double commandedLeft_=0.0;  // mm/s, guarded by commandMutex_
     double commandedRight_=0.0; // mm/s, guarded by commandMutex_
+    double directForward_=0.0;  // last setSpeed request, guarded by commandMutex_
+    double directRotation_=0.0; // guarded by commandMutex_
+    bool sentWithLimit_=false;  // speed limit state of the last sendSpeed, guarded by commandMutex_
+    std::atomic<bool> obstacleNear_{false}; // a LiDAR point is closer than 0.5 m
 
 
     ///pomocne strukutry aby ste si trosku nerobili race conditions

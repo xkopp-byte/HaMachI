@@ -15,6 +15,10 @@ constexpr double kPredictionSeconds=2.0;
 constexpr double kSquareSideTolerance=0.20; // each side within +-20% of the mean
 constexpr double kSquareMinimumSide=0.05;   // normalised; rejects untracked (0,0) hands
 constexpr double kViewToggleCooldownSeconds=3.0;
+// Below this LiDAR distance the maximum speed is halved.
+constexpr double kMaximumSpeed=500.0;         // mm/s, fastest manual command
+constexpr double kSlowZoneDistance=500.0;     // mm = 0.5 m
+constexpr double kMinimumValidDistance=100.0; // mm, shorter readings are noise
 
 #ifndef DISABLE_OPENCV
 // Camera model shared by the LiDAR overlay and the predicted path.
@@ -131,6 +135,20 @@ void robot::setSpeedVal(double forw, double rots)
 void robot::setSpeed(double forw, double rots)
 {
     std::lock_guard<std::mutex> lock(commandMutex_);
+    directForward_=forw;
+    directRotation_=rots;
+    sendSpeed(forw, rots);
+    useDirectCommands=1;
+}
+
+void robot::sendSpeed(double forw, double rots)
+{
+    sentWithLimit_=obstacleNear_;
+    const double limit=kMaximumSpeed*(sentWithLimit_ ? 0.5 : 1.0);
+    if (std::abs(forw)>limit) {
+        rots*=limit/std::abs(forw); // keep the arc radius
+        forw=std::copysign(limit, forw);
+    }
     if(forw==0 && rots!=0)
         robotCom.setRotationSpeed(rots);
     else if(forw!=0 && rots==0)
@@ -140,7 +158,6 @@ void robot::setSpeed(double forw, double rots)
     else
         robotCom.setTranslationSpeed(0);
     setCommandedWheels(forw, rots);
-    useDirectCommands=1;
 }
 
 void robot::setGestureControlEnabled(bool enabled)
@@ -151,6 +168,7 @@ void robot::setGestureControlEnabled(bool enabled)
     if (!enabled) {
         leftWheelSpeed_=0;
         rightWheelSpeed_=0;
+        directForward_=directRotation_=0;
         robotCom.setTranslationSpeed(0);
         setCommandedWheels(0, 0);
         useDirectCommands=1;
@@ -173,6 +191,7 @@ void robot::updateGestureSpeeds()
         std::lock_guard<std::mutex> lock(skeletonMutex_);
         gestureData=skeleJoints;
     }
+    const double maximumSpeed=kMaximumGestureSpeed*(obstacleNear_ ? 0.5 : 1.0);
 
     const klb &leftMiddle=gestureData.joints[left_middle_tip];
     const klb &rightMiddle=gestureData.joints[right_middle_tip];
@@ -199,7 +218,7 @@ void robot::updateGestureSpeeds()
                                                   gestureData.joints[indexTip])/palm;
             const double ratio=(extension-kFingerCurledRatio)
                 /(kFingerExtendedRatio-kFingerCurledRatio);
-            return -kMaximumGestureSpeed*std::max(0.0, std::min(ratio, 1.0));
+            return -maximumSpeed*std::max(0.0, std::min(ratio, 1.0));
         };
         targetLeft=reverseSpeed(left_wrist, left_middle_mcp,
                                 left_index_mcp, left_index_tip);
@@ -218,7 +237,7 @@ void robot::updateGestureSpeeds()
                 return 0.0;
             const double angleDegrees=std::atan2(up, sideways)*180.0/3.14159265358979323846;
             const int segment=std::min(static_cast<int>(angleDegrees/18.0), 4);
-            return kMaximumGestureSpeed*segment/4.0;
+            return maximumSpeed*segment/4.0;
         };
         targetLeft=forwardSpeed(left_middle_mcp, left_middle_tip);
         targetRight=forwardSpeed(right_middle_mcp, right_middle_tip);
@@ -298,17 +317,9 @@ int robot::processThisRobot(TKobukiData robotdata)
     else
 #endif
     if(useDirectCommands==0)
-    {
-        if(forwardspeed==0 && rotationspeed!=0)
-            robotCom.setRotationSpeed(rotationspeed);
-        else if(forwardspeed!=0 && rotationspeed==0)
-            robotCom.setTranslationSpeed(forwardspeed);
-        else if((forwardspeed!=0 && rotationspeed!=0))
-            robotCom.setArcSpeed(forwardspeed,forwardspeed/rotationspeed);
-        else
-            robotCom.setTranslationSpeed(0);
-        setCommandedWheels(forwardspeed, rotationspeed);
-    }
+        sendSpeed(forwardspeed, rotationspeed);
+    else if(sentWithLimit_!=obstacleNear_)
+        sendSpeed(directForward_, directRotation_); // re-apply the changed speed limit
     if (datacounter%5==0)
         emit publishWheelSpeeds(commandedLeft_, commandedRight_);
     emit telemetryReceived();
@@ -344,6 +355,15 @@ int robot::processThisLidar(LaserMeasurement laserData)
         std::lock_guard<std::mutex> lock(lidarMutex_);
         copyOfLaserData=laserData;
     }
+    bool obstacleFound=false;
+    for (int i=0; i<laserData.numberOfScans && i<1000; ++i) {
+        const double distance=laserData.Data[i].scanDistance;
+        if (std::isfinite(distance) && distance>=kMinimumValidDistance && distance<kSlowZoneDistance) {
+            obstacleFound=true;
+            break;
+        }
+    }
+    obstacleNear_=obstacleFound;
     //tu mozete robit s datami z lidaru.. napriklad najst prekazky, zapisat do mapy. naplanovat ako sa prekazke vyhnut.
     // ale nic vypoctovo narocne - to iste vlakno ktore cita data z lidaru
    // updateLaserPicture=1;

@@ -472,8 +472,8 @@ void MainWindow::startRobotSession(const QString &address, bool simulation)
 #ifndef DISABLE_SKELETON
     connect(robot_, &robot::viewToggleGesture, this, [this, id]{
         if (id != sessionId_ || !robot_) return;
-        // Same effect as picking the other entry in the View combo box.
-        ui->viewComboBox->setCurrentIndex(ui->viewComboBox->currentIndex() == 0 ? 1 : 0);
+        // Same effect as clicking the preview swap button.
+        setMainView(parkingViewMain_ ? 0 : 1);
     }, Qt::QueuedConnection);
 #endif
     connect(robot_, &robot::publishWheelSpeeds, this, [this, id](double left, double right){
@@ -482,7 +482,6 @@ void MainWindow::startRobotSession(const QString &address, bool simulation)
         rightWheelSpeed_ = right;
         ui->lidarView->update();
     }, Qt::QueuedConnection);
-    ui->viewComboBox->setEnabled(true);
     robot_->lidarFusion(true);
     robot_->initAndStartRobot(address.toStdString());
     sessionTimer_.start();
